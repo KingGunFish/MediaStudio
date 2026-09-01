@@ -6,8 +6,8 @@ node_modules/
 # C:\Users\<you>\...), so they must never be committed.
 dist/
 dist*/
-build/
 out/
+electron-app/build/
 release/
 electron-app/dist/
 electron-app/dist*/
@@ -16,6 +16,8 @@ electron-app/out/
 # Generated test outputs / .err logs (not source)
 electron-app/_test/
 sdk/build/
+# NOTE: tools/build/ is intentionally tracked — it holds the SDK build helper
+# scripts (source), not build output (output goes to sdk/build/).
 
 # ===== Logs =====
 *.log
