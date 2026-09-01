@@ -1,0 +1,388 @@
+/* src/renderer/src/styles.css */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", Roboto, sans-serif;
+  background: #0f1419;
+  color: #e6e6e6;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 200px;
+  background: #1a1f29;
+  border-right: 1px solid #2a3038;
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #4d9fff;
+  padding: 0 16px 16px;
+  border-bottom: 1px solid #2a3038;
+}
+
+.nav-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  color: #a0a8b0;
+  border-left: 3px solid transparent;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.nav-item:hover {
+  background: #232936;
+  color: #e6e6e6;
+}
+
+.nav-item.active {
+  border-left-color: #4d9fff;
+  color: #fff;
+  background: #232936;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page {
+  flex: 1;
+  padding: 24px 32px;
+  overflow-y: auto;
+}
+
+.page h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.page .subtitle {
+  color: #888;
+  margin-bottom: 24px;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.page-header .subtitle {
+  margin-bottom: 0;
+}
+
+.dropzone {
+  border: 2px dashed #3a4250;
+  border-radius: 12px;
+  padding: 60px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: #1a1f29;
+}
+
+.dropzone:hover {
+  border-color: #4d9fff;
+  background: #20262f;
+}
+
+.dropzone.dragover {
+  border-color: #4d9fff;
+  background: #20262f;
+  border-style: solid;
+}
+
+.dropzone .icon {
+  font-size: 48px;
+  color: #4d9fff;
+  margin-bottom: 12px;
+}
+
+.dropzone .text {
+  color: #e6e6e6;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.dropzone .hint {
+  color: #888;
+  font-size: 13px;
+}
+
+.file-info {
+  background: #1a1f29;
+  border: 1px solid #2a3038;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.file-info .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.file-info .label {
+  color: #888;
+}
+
+.file-info .value {
+  color: #e6e6e6;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+
+/* Original-video metadata: sits right below the input path, 2px smaller
+   than the path font (13px -> 11px) and greyed out. */
+.video-meta {
+  text-align: right;
+  font-size: 11px;
+  color: #888;
+  margin-top: 6px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+
+.options {
+  background: #1a1f29;
+  border: 1px solid #2a3038;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.options h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4d9fff;
+  margin-bottom: 12px;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+
+.form-row label {
+  width: 120px;
+  color: #a0a8b0;
+  font-size: 13px;
+}
+
+.form-row input[type="number"],
+.form-row input[type="text"],
+.form-row select {
+  flex: 1;
+  background: #0f1419;
+  color: #e6e6e6;
+  border: 1px solid #3a4250;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.form-row input[type="checkbox"] {
+  margin-left: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.btn {
+  background: #4d9fff;
+  color: #fff;
+  border: 1px solid #4d9fff;
+  border-radius: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  background: #3d8fef;
+  border-color: #3d8fef;
+}
+
+.btn:disabled {
+  background: #3a4250;
+  border-color: #3a4250;
+  color: #8a929c;
+  cursor: not-allowed;
+}
+
+/* Secondary buttons are blue-outlined when enabled, greyed out when disabled */
+.btn.secondary {
+  background: transparent;
+  color: #4d9fff;
+  border: 1px solid #4d9fff;
+}
+
+.btn.secondary:hover:not(:disabled) {
+  background: rgba(77, 159, 255, 0.12);
+}
+
+.btn.secondary:disabled {
+  background: #3a4250;
+  border-color: #3a4250;
+  color: #8a929c;
+  cursor: not-allowed;
+}
+
+.progress {
+  margin-top: 16px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #2a3038;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4d9fff, #6dbfff);
+  transition: width 0.2s;
+}
+
+.progress-text {
+  color: #a0a8b0;
+  font-size: 12px;
+  margin-top: 4px;
+  text-align: right;
+}
+
+.preview {
+  background: repeating-conic-gradient(#2a3038 0% 25%, #232936 25% 50%) 50% / 16px 16px;
+  border: 1px solid #2a3038;
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.preview img {
+  max-width: 100%;
+  max-height: 400px;
+}
+
+.status {
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.status.success {
+  background: rgba(40, 200, 100, 0.15);
+  color: #4ad88a;
+  border: 1px solid rgba(40, 200, 100, 0.3);
+}
+
+.status.error {
+  background: rgba(255, 80, 80, 0.15);
+  color: #ff7a7a;
+  border: 1px solid rgba(255, 80, 80, 0.3);
+}
+
+.status.info {
+  background: rgba(77, 159, 255, 0.15);
+  color: #4d9fff;
+  border: 1px solid rgba(77, 159, 255, 0.3);
+}
+
+/* Small circled "?" help badge with a hover tooltip.
+   Sits next to a heading (e.g. 背景色 (RGB)) and explains the field. */
+.help-q {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  border-radius: 50%;
+  border: 1px solid #6a7385;
+  color: #a0a8b0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+  position: relative;
+}
+
+.help-q:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: 150%;
+  transform: translateX(-50%);
+  width: 260px;
+  background: #232936;
+  color: #e6e6e6;
+  border: 1px solid #3a4250;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  text-align: left;
+  z-index: 50;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+/* 背景色 (RGB): keep R / G / B on a single horizontal row instead of three
+   stacked rows. Inputs are fixed-width so the three pairs align neatly. */
+.rgb-row {
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.rgb-row label {
+  width: auto;
+  min-width: 16px;
+}
+
+.rgb-row input[type="number"] {
+  flex: 0 0 auto;
+  width: 72px;
+}

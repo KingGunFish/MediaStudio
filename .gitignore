@@ -1,0 +1,39 @@
+# ===== Dependencies =====
+node_modules/
+
+# ===== Build / package outputs =====
+# These contain local absolute paths (e.g. builder-debug.yml embeds
+# C:\Users\<you>\...), so they must never be committed.
+dist/
+dist*/
+build/
+out/
+release/
+electron-app/dist/
+electron-app/dist*/
+electron-app/release/
+electron-app/out/
+# Generated test outputs / .err logs (not source)
+electron-app/_test/
+sdk/build/
+
+# ===== Logs =====
+*.log
+
+# ===== OS / editor cruft =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
+
+# ===== Local / personal — MUST NOT be committed =====
+.workbuddy/        # WorkBuddy memory + identity files (personal info)
+.codeartsdoer/     # IDE workspace settings (may contain local machine paths)
+*.bak.corrupt
+*.corrupt
+
+# ===== Prebuilt SDK binaries =====
+# electron-app/resources/sdk/*.exe and *.dll are intentionally tracked so that
+# `npm run package` works out of the box (ffmpeg/ffprobe are resolved from PATH
+# at runtime). Do not add them to the ignore list.

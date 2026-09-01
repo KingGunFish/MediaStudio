@@ -1,0 +1,62 @@
+# electron-builder.yml
+appId: com.mediastudio.app
+productName: Media Studio
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: resources
+
+extraResources:
+  - from: resources/sdk
+    to: sdk
+    filter: ['**/*']
+
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+  - "!**/*.ts"
+
+asar: true
+asarUnpack:
+  - "**/node-*/**"
+  - "resources/**"
+
+# We use child_process (no native modules) so no rebuild needed
+npmRebuild: false
+
+# Windows - NSIS installer, skip code signing
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.ico
+  artifactName: ${productName}-${version}-setup.${ext}
+
+# macOS
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.graphics-design
+  icon: resources/icon.icns
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# Linux
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Graphics
+  icon: resources/icon.png
+  artifactName: ${productName}-${version}.${ext}
+
+# NSIS installer
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Media Studio
