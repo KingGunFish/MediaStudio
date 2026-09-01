@@ -30,12 +30,18 @@ Thumbs.db
 *.tsbuildinfo
 
 # ===== Local / personal — MUST NOT be committed =====
-.workbuddy/        # WorkBuddy memory + identity files (personal info)
-.codeartsdoer/     # IDE workspace settings (may contain local machine paths)
+# WorkBuddy memory + identity files (personal info)
+.workbuddy/
+# IDE workspace settings (may contain local machine paths)
+.codeartsdoer/
 *.bak.corrupt
 *.corrupt
 
 # ===== Prebuilt SDK binaries =====
-# electron-app/resources/sdk/*.exe and *.dll are intentionally tracked so that
-# `npm run package` works out of the box (ffmpeg/ffprobe are resolved from PATH
-# at runtime). Do not add them to the ignore list.
+# ms_demo.exe / libmedia_studio.dll are tracked so `npm run package` is
+# out-of-the-box. The large ffmpeg/ffprobe binaries are fetched at build time
+# via `npm run fetch:ffmpeg` (tools/fetch-ffmpeg.mjs) and must NOT be committed.
+electron-app/resources/sdk/ffmpeg.exe
+electron-app/resources/sdk/ffprobe.exe
+electron-app/resources/sdk/ffplay.exe
+# (ms_demo.exe and libmedia_studio.dll remain tracked)

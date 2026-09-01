@@ -179,6 +179,46 @@ void emit_progress_from_line(const std::string& line,
     }
 }
 
+// Resolve the directory that contains the current executable. Used to locate a
+// bundled ffmpeg/ffprobe shipped next to ms_demo (so the app works out of the
+// box without requiring ffmpeg on the system PATH).
+std::string exe_dir() {
+#ifdef _WIN32
+    char buf[MAX_PATH] = {0};
+    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    if (n == 0) return "";
+    std::string s(buf, n);
+    auto pos = s.find_last_of('\\');
+    return pos == std::string::npos ? "" : s.substr(0, pos);
+#else
+    char buf[4096] = {0};
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return "";
+    std::string s(buf, n);
+    auto pos = s.find_last_of('/');
+    return pos == std::string::npos ? "" : s.substr(0, pos);
+#endif
+}
+
+// Prefer a copy of `name` bundled next to this executable; fall back to the
+// compile-time default (usually "ffmpeg"/"ffprobe", i.e. a PATH lookup).
+// An explicit FFMPEG / FFPROBE environment variable always wins (source builds).
+std::string resolve_executable(const std::string& fallback, const std::string& name) {
+    const char* env = std::getenv(name == "ffmpeg" ? "FFMPEG" : "FFPROBE");
+    if (env && *env) return std::string(env);
+    std::string dir = exe_dir();
+    if (!dir.empty()) {
+#ifdef _WIN32
+        std::string candidate = dir + "\\" + name + ".exe";
+#else
+        std::string candidate = dir + "/" + name;
+#endif
+        FILE* f = std::fopen(candidate.c_str(), "rb");
+        if (f) { std::fclose(f); return candidate; }
+    }
+    return fallback;
+}
+
 }  // namespace
 
 #ifdef _WIN32
@@ -322,14 +362,16 @@ FFmpegResult run_ffmpeg(
     ProgressFn on_progress,
     double total_duration_seconds
 ) {
-    return run_with_createprocess(MS_FFMPEG_EXECUTABLE, args, on_progress, total_duration_seconds);
+    static const std::string exe = resolve_executable(MS_FFMPEG_EXECUTABLE, "ffmpeg");
+    return run_with_createprocess(exe, args, on_progress, total_duration_seconds);
 }
 
 FFmpegResult run_ffprobe(
     const std::vector<std::string>& args,
     std::string& output
 ) {
-    auto r = run_with_createprocess(MS_FFPROBE_EXECUTABLE, args, nullptr, -1.0);
+    static const std::string exe = resolve_executable(MS_FFPROBE_EXECUTABLE, "ffprobe");
+    auto r = run_with_createprocess(exe, args, nullptr, -1.0);
     // ffprobe writes metadata to stdout. Use stdout if present, else stderr.
     if (!r.stdout_output.empty()) {
         output = std::move(r.stdout_output);

@@ -8,8 +8,9 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build": "npm run build:renderer && npm run build:main",
     "start": "npm run build && electron .",
-    "package:win": "npm run build && electron-builder --win",
-    "package": "npm run build && electron-builder"
+    "fetch:ffmpeg": "node ../tools/fetch-ffmpeg.mjs",
+    "package:win": "npm run build && npm run fetch:ffmpeg && electron-builder --win",
+    "package": "npm run build && npm run fetch:ffmpeg && electron-builder"
   },
   "author": "",
   "license": "MIT",
