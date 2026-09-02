@@ -12,8 +12,14 @@
 
 ## 下载与安装（开箱即用）
 
-从 GitHub Releases 下载安装包（NSIS `Media Studio-1.0.0-setup.exe）并安装即可。
-**安装包已内置 ffmpeg / ffprobe**，程序会优先从自身目录 `resources/sdk/` 调用，无需在系统 PATH 中安装 ffmpeg，也无需任何额外下载。
+GitHub Releases 提供两种开箱即用包，均**已内置 ffmpeg / ffprobe（默认 LGPL 版，MIT 兼容）**，
+程序优先从自身目录 `resources/sdk/` 调用，无需在系统 PATH 安装 ffmpeg，也无需任何额外下载：
+
+- **安装版** `Media Studio-1.0.0-setup.exe`：双击一键安装（默认装到用户目录，无需管理员），
+  自动创建开始菜单 / 桌面快捷方式，装完即用。
+- **绿色版**（任选其一，免安装）：
+  - `Media Studio-1.0.0-portable.exe`：单文件，双击自解压运行。
+  - `Media Studio-1.0.0-win.zip`：解压后双击 `Media Studio.exe` 即可直接使用。
 
 ## 从源码开发
 
@@ -32,6 +38,8 @@ npm run package        # 构建并打包（会自动执行 fetch:ffmpeg）
 - 若 `resources/sdk/` 已存在 **LGPL 兼容**的 ffmpeg，脚本会跳过下载（离线可用）；
   若检测到已存在的是 **GPL** 构建，则会自动重新拉取 LGPL 版以替换，保证发布产物与 MIT 兼容。
 - 设 `FORCE_FETCH=1` 可强制重新下载（忽略本地已有文件）。
+- **一条命令出全部发布包（Windows，需联网拉取 LGPL ffmpeg）**：`npm run release:win`
+  （= `npm install` + 构建 + `fetch:ffmpeg` + 打包安装版 `setup.exe` / 绿色版 `portable.exe` / `win.zip`）。
 
 ### ffmpeg / ffprobe 的查找顺序（运行时）
 

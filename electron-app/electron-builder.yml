@@ -26,13 +26,14 @@ asarUnpack:
 # We use child_process (no native modules) so no rebuild needed
 npmRebuild: false
 
-# Windows - NSIS installer, skip code signing
+# Windows - NSIS installer (one-click) + portable (green, no install) + zip (green folder)
 win:
   target:
-    - target: nsis
-      arch: [x64]
+    - nsis
+    - portable
+    - zip
   icon: resources/icon.ico
-  artifactName: ${productName}-${version}-setup.${ext}
+  artifactName: ${productName}-${version}-win.${ext}
 
 # macOS
 mac:
@@ -52,11 +53,15 @@ linux:
   icon: resources/icon.png
   artifactName: ${productName}-${version}.${ext}
 
-# NSIS installer
+# NSIS installer (one-click, per-user, no admin)
 nsis:
-  oneClick: false
+  oneClick: true
   perMachine: false
-  allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Media Studio
+  artifactName: ${productName}-${version}-setup.${ext}
+
+# Portable / green build: single exe that extracts & runs, no installation
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

@@ -10,7 +10,8 @@
     "start": "npm run build && electron .",
     "fetch:ffmpeg": "node ../tools/fetch-ffmpeg.mjs",
     "package:win": "npm run build && npm run fetch:ffmpeg && electron-builder --win",
-    "package": "npm run build && npm run fetch:ffmpeg && electron-builder"
+    "package": "npm run build && npm run fetch:ffmpeg && electron-builder",
+    "release:win": "npm install && npm run package:win"
   },
   "author": "",
   "license": "MIT",
