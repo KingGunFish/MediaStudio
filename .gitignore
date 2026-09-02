@@ -45,3 +45,6 @@ electron-app/resources/sdk/ffmpeg.exe
 electron-app/resources/sdk/ffprobe.exe
 electron-app/resources/sdk/ffplay.exe
 # (ms_demo.exe and libmedia_studio.dll remain tracked)
+
+# partial downloads (resume artifacts)
+ffmpeg-lgpl.part.zip

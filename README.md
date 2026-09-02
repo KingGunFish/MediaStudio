@@ -29,7 +29,9 @@ npm run package        # 构建并打包（会自动执行 fetch:ffmpeg）
 - `npm run fetch:ffmpeg` 默认拉取 **LGPL** 构建（与本项目 MIT 许可兼容）；
   设 `FFMPEG_BUILD=gpl` 可改用完整 GPL 构建；也可手动把 `ffmpeg(.exe)` / `ffprobe(.exe)` 放进
   `electron-app/resources/sdk/`。
-- 若 `resources/sdk/` 已存在 ffmpeg，脚本会跳过下载（离线可用）。
+- 若 `resources/sdk/` 已存在 **LGPL 兼容**的 ffmpeg，脚本会跳过下载（离线可用）；
+  若检测到已存在的是 **GPL** 构建，则会自动重新拉取 LGPL 版以替换，保证发布产物与 MIT 兼容。
+- 设 `FORCE_FETCH=1` 可强制重新下载（忽略本地已有文件）。
 
 ### ffmpeg / ffprobe 的查找顺序（运行时）
 

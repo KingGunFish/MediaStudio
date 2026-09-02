@@ -7,10 +7,12 @@
  * Defaults to the LGPL build (MIT-compatible). Set FFMPEG_BUILD=gpl to fetch
  * the full GPL build, or set FFMPEG_BUILD_URL to a custom archive.
  *
- * Skips downloading when ffmpeg(.exe) already exists in the target dir,
- * unless FORCE_FETCH=1.
+ * Skips downloading when a compatible ffmpeg(.exe) already exists in the
+ * target dir, unless FORCE_FETCH=1. If the default (LGPL) build is requested
+ * but an existing binary turns out to be a GPL build, it is re-fetched so the
+ * shipped app stays MIT-compatible.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readdirSync, statSync, copyFileSync, rmSync,
 } from 'node:fs';
@@ -44,9 +46,27 @@ const exeSuffix = platform === 'win32' ? '.exe' : '';
 const targetFfmpeg = join(sdkDir, `ffmpeg${exeSuffix}`);
 const targetFfprobe = join(sdkDir, `ffprobe${exeSuffix}`);
 
-if (!process.env.FORCE_FETCH && existsSync(targetFfmpeg) && existsSync(targetFfprobe)) {
-  console.log('[fetch-ffmpeg] ffmpeg/ffprobe already present in resources/sdk — skipping.');
+// Detect whether an existing binary is a GPL build (so the default LGPL fetch
+// can replace it and keep the shipped app MIT-compatible).
+function binaryIsGpl(binPath) {
+  try {
+    const r = spawnSync(binPath, ['-version'], { encoding: 'utf8', timeout: 15000 });
+    const out = `${r.stdout || ''}${r.stderr || ''}`;
+    return /--enable-gpl\b/.test(out);
+  } catch {
+    return false; // cannot determine -> treat as compatible, don't block
+  }
+}
+
+const present = existsSync(targetFfmpeg) && existsSync(targetFfprobe);
+const presentIsGpl = present && variant === 'lgpl' && binaryIsGpl(targetFfmpeg);
+
+if (present && !presentIsGpl && !process.env.FORCE_FETCH) {
+  console.log('[fetch-ffmpeg] ffmpeg/ffprobe already present (LGPL-compatible) in resources/sdk — skipping.');
   process.exit(0);
+}
+if (presentIsGpl) {
+  console.log('[fetch-ffmpeg] existing ffmpeg is a GPL build; re-fetching LGPL to keep the app MIT-compatible.');
 }
 
 const url = process.env.FFMPEG_BUILD_URL
