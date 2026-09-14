@@ -279,16 +279,21 @@ export function CropPage() {
     [dims],
   );
 
-  // Wheel zoom anchored at the cursor (Photoshop-style).
+  // Wheel zoom anchored at the cursor — but ONLY when the cursor is inside
+  // the W x H canvas area. Over the stage's letterbox padding (or anywhere
+  // else on the page) the wheel keeps its normal page-scroll behavior.
   useEffect(() => {
     const cv = previewRef.current;
     if (!cv || !dims) return;
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
       const rect = cv.getBoundingClientRect();
       const k = VIEW.w / rect.width;
       const mx = (e.clientX - rect.left) * k;
       const my = (e.clientY - rect.top) * k;
+      const cw = dims.w * viewScale;
+      const ch = dims.h * viewScale;
+      if (mx < viewOx || mx > viewOx + cw || my < viewOy || my > viewOy + ch) return;
+      e.preventDefault();
       const cx = (mx - viewOx) / viewScale;
       const cy = (my - viewOy) / viewScale;
       const factor = Math.pow(1.0015, -e.deltaY);
