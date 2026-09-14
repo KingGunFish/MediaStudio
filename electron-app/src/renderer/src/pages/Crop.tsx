@@ -68,6 +68,21 @@ function getChecker(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   return ctx.createPattern(checkerTile, 'repeat');
 }
 
+type OutFormat = 'png' | 'jpg' | 'webp';
+
+const FORMAT_MIME: Record<OutFormat, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  webp: 'image/webp',
+};
+
+// Encode output; PNG ignores the quality argument.
+function encodeCanvas(c: HTMLCanvasElement, format: OutFormat): Promise<Blob | null> {
+  return new Promise((res) =>
+    c.toBlob(res, FORMAT_MIME[format], format === 'png' ? undefined : 0.92),
+  );
+}
+
 export function CropPage() {
   const [inputPath, setInputPath] = useState('');
   const [srcName, setSrcName] = useState('');
@@ -79,7 +94,7 @@ export function CropPage() {
   const [transform, setTransform] = useState<Transform>({ scale: 1, x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [estBytes, setEstBytes] = useState<number | null>(null);
-  const [format, setFormat] = useState<'png' | 'jpg'>('png');
+  const [format, setFormat] = useState<OutFormat>('png');
   const [transparent, setTransparent] = useState(false);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [busy, setBusy] = useState(false);
@@ -106,6 +121,10 @@ export function CropPage() {
       setOrigH(bmp.height);
       setWStr(String(bmp.width));
       setHStr(String(bmp.height));
+      // Default the output format to the source format (gif/bmp -> png,
+      // single frame only / no encoder).
+      const ext = p.split('.').pop()?.toLowerCase() || '';
+      setFormat(ext === 'jpg' || ext === 'jpeg' ? 'jpg' : ext === 'webp' ? 'webp' : 'png');
       const d = { w: bmp.width, h: bmp.height };
       setDims(d);
       const scale = Math.min(d.w / bmp.width, d.h / bmp.height);
@@ -151,7 +170,7 @@ export function CropPage() {
     if (!ctx) return null;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    if (!(transparent && format === 'png')) {
+    if (!(transparent && format !== 'jpg')) {
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, dims.w, dims.h);
     }
@@ -171,9 +190,9 @@ export function CropPage() {
     ctx.clearRect(0, 0, VIEW.w, VIEW.h);
     const cw = dims.w * viewScale;
     const ch = dims.h * viewScale;
-    ctx.fillStyle = transparent && format === 'png' ? '#141a22' : bgColor;
+    ctx.fillStyle = transparent && format !== 'jpg' ? '#141a22' : bgColor;
     ctx.fillRect(viewOx, viewOy, cw, ch);
-    if (transparent && format === 'png') {
+    if (transparent && format !== 'jpg') {
       const pat = getChecker(ctx);
       if (pat) {
         ctx.save();
@@ -211,13 +230,9 @@ export function CropPage() {
     const timer = setTimeout(() => {
       const c = renderOutput();
       if (!c) return;
-      c.toBlob(
-        (blob) => {
-          if (blob) setEstBytes(blob.size);
-        },
-        format === 'png' ? 'image/png' : 'image/jpeg',
-        0.92,
-      );
+      encodeCanvas(c, format).then((blob) => {
+        if (blob) setEstBytes(blob.size);
+      });
     }, 350);
     return () => clearTimeout(timer);
   }, [dims, transform, format, transparent, bgColor, renderOutput]);
@@ -327,9 +342,7 @@ export function CropPage() {
     try {
       const c = renderOutput();
       if (!c) throw new Error('画布无效');
-      const blob = await new Promise<Blob | null>((res) =>
-        c.toBlob(res, format === 'png' ? 'image/png' : 'image/jpeg', 0.92),
-      );
+      const blob = await encodeCanvas(c, format);
       if (!blob) throw new Error('图片编码失败');
       const bytes = new Uint8Array(await blob.arrayBuffer());
       const r = await writeFileBytes(path, bytes);
@@ -425,13 +438,15 @@ export function CropPage() {
             <h3>输出设置</h3>
             <div className="form-row">
               <label>格式:</label>
-              <select value={format} onChange={(e) => setFormat(e.target.value as 'png' | 'jpg')}>
+              <select value={format} onChange={(e) => setFormat(e.target.value as OutFormat)}>
                 <option value="png">PNG (支持透明)</option>
                 <option value="jpg">JPG (体积小, 自动压平)</option>
+                <option value="webp">WebP (支持透明, 体积更小)</option>
               </select>
+              <span className="option-tip">导入时自动跟随原图格式, 可随时切换</span>
             </div>
             <div className="form-row">
-              <label>透明背景 (仅 PNG):</label>
+              <label>透明背景 (PNG/WebP):</label>
               <input
                 type="checkbox"
                 checked={transparent}

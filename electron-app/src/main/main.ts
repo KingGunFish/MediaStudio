@@ -270,6 +270,14 @@ ipcMain.handle('dialog:openFile', async (_e, filters?: string) => {
       video: ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', 'flv', 'wmv', 'mpeg', 'mpg', 'ogv'],
       image: ['gif', 'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff'],
     };
+    // Common MIME -> extension aliases, so e.g. "image/jpeg" also matches
+    // .jpg files (otherwise jpg images are greyed out in the dialog).
+    const extAlias: Record<string, string[]> = {
+      jpg: ['jpg', 'jpeg'],
+      jpeg: ['jpg', 'jpeg'],
+      tif: ['tif', 'tiff'],
+      tiff: ['tif', 'tiff'],
+    };
     const exts = new Set<string>();
     for (const raw of filters.split(',')) {
       let t = raw.trim().toLowerCase();
@@ -280,12 +288,14 @@ ipcMain.handle('dialog:openFile', async (_e, filters?: string) => {
         if (!sub || sub === '*') {
           (knownByCat[cat] || ['*']).forEach((e) => exts.add(e));
         } else {
-          exts.add(sub.replace(/^\./, ''));
+          const ext = sub.replace(/^\./, '');
+          for (const e of extAlias[ext] || [ext]) exts.add(e);
         }
       } else if (t === '*' || t === '*.*') {
         exts.add('*');
       } else {
-        exts.add(t);
+        const ext = t;
+        for (const e of extAlias[ext] || [ext]) exts.add(e);
       }
     }
     const list = [...exts];
