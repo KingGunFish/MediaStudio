@@ -1,0 +1,54 @@
+# AGENTS.md — Agent 工程约定（长期有效）
+
+给在本仓库工作的 AI 编码代理（ZCode / Codex / Claude Code 等）的长期约束。
+优先级高于任何单次任务的"顺手优化"冲动。
+
+## 核心设计原则
+
+### 1. 最小改动原则（Minimize）
+- 只改任务要求改的东西。禁止顺手重构、禁止"捎带"修复无关问题、禁止调整无关格式。
+- 每一次 diff 都应能逐行回答"这是哪个需求要求的"。
+
+### 2. 开闭原则（OCP：对扩展开放，对修改封闭）
+- 新功能优先用**新文件 / 新模块 / 新增参数**实现，而不是改写已有模块的既有行为。
+- 已经过验证的底层工具、脚本、配置（如 `tools/fetch-ffmpeg.mjs`、
+  `electron-builder.yml`、`resources/sdk/*` 二进制）视为"修改封闭"区：
+  要扩展行为时新增旁路，不要原地改写。
+
+### 3. 底层工具与二进制不可擅自替换
+- `electron-app/resources/sdk/` 下的 ffmpeg/ffprobe/ms_demo 是**用户管理的资产**
+  （gitignore 掉的大体积二进制、含既定许可状态）。任何替换/升级/重下载
+  必须先征得用户明确同意。
+- 已知既定状态（2026-09-02 起，见 .workbuddy/memory）：sdk 内是 **GPL 版
+  ffmpeg**；`npm run package:win` 会经 `fetch:ffmpeg` 自动尝试替换为 LGPL。
+  若本次任务**不涉及**许可替换，打包时绕过它：
+  `npm run version && npx electron-builder --win`（不跑 fetch:ffmpeg）。
+
+### 4. 先闭环，再继续
+- 发现自己做出了超出授权的改动，**先恢复原状**（从 git、旧构建产物、
+  缓存副本恢复），再完成任务；恢复后必须校验（字节数 / 版本横幅 / 行为）。
+- 交付前自查：git diff 里有没有与需求无关的行。
+
+### 5. 外部资源：先找本地缓存，再考虑下载
+- 长时间下载前先查：临时目录（%TEMP%）、旧构建产物（dist*/、release/）、
+  .workbuddy/memory 是否已有现成副本。（例：LGPL ffmpeg zip 在
+  %TEMP%/ffmpeg-lgpl-win32.zip 早有完整缓存。）
+- 网络受限（本机代理 127.0.0.1:35290 时开时关）时，避免把任务押在
+  大体积下载上。
+
+### 6. 版本号规范
+- 格式 `<年度>.<周>.<编译时间戳>`，如 `1.1.202609141506`：
+  - 第 1 位：跨年 +1（此时周位归零，1.1.x -> 2.0.x）
+  - 第 2 位：跨 ISO 周（周一为一周之始）+1
+  - 第 3 位：每次打包自动取 YYYYMMDDHHMM，由 `tools/update-version.mjs`
+    在 `npm run package` / `package:win` 链中自动写入。
+- 不要手工改 package.json 的 version 来发版。
+
+## 工程事实速查
+
+- 打包产物：`electron-app/release/`（NSIS setup / portable / win.zip）。
+- 打包后必须冒烟：启动 `release/win-unpacked/Media Studio.exe`，检查
+  `%TEMP%\media-studio.log` 出现 `SDK worker present`。
+- 应用日志：`%TEMP%\media-studio.log`。
+- 提交遵循 conventional commits（feat/fix/chore/build），不强推，
+  远端 https://github.com/KingGunFish/MediaStudio 。
