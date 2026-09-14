@@ -1,6 +1,6 @@
 # Media Studio
 
-一个桌面端视频 / GIF 处理工具（Electron + C++ SDK），把视频或 GIF 转成**去背景透明 GIF**，自带 5 种抠图算法。
+一个视频、图片、音频等媒体处理工具，桌面客户端。
 
 ## 功能
 
@@ -71,3 +71,7 @@ ms_demo keying --algorithm chroma --color 0,255,0 input.gif output.gif
 - 本项目源码：MIT（见 `LICENSE`）
 - ffmpeg / ffprobe：随二进制构建而定。默认 `fetch:ffmpeg` 拉取 LGPL 构建；
   若使用 GPL 构建，请遵循 GPL 条款。
+
+  ## 联系
+  Email：demonshir@qq.com
+  
