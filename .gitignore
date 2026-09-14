@@ -34,6 +34,9 @@ Thumbs.db
 .workbuddy/
 # IDE workspace settings (may contain local machine paths)
 .codeartsdoer/
+# Local agent skill/tool directories (session-local, not project source)
+.skill/
+.codex/
 *.bak.corrupt
 *.corrupt
 

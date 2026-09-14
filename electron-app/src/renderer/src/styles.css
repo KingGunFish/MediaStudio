@@ -386,3 +386,162 @@ body {
   flex: 0 0 auto;
   width: 72px;
 }
+
+/* Full output path shown directly above the BMP preview canvas. */
+.preview-path {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  margin-top: 16px;
+  background: #1a1f29;
+  border: 1px solid #2a3038;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+}
+
+.preview-path .label {
+  color: #888;
+  flex: 0 0 auto;
+}
+
+.preview-path .value {
+  color: #4d9fff;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  word-break: break-all;
+}
+
+.preview-path .size {
+  margin-left: auto;
+  color: #888;
+  flex: 0 0 auto;
+}
+
+/* Preview box stacked right under the path bar: square top corners. */
+.preview.attached {
+  margin-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+
+.array-hint {
+  color: #888;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+/* Generated-array viewer: fixed height matching the BMP preview, scrollable,
+   with a small copy button pinned at the top-right of the window. */
+.array-box {
+  margin-top: 16px;
+  border: 1px solid #2a3038;
+  border-radius: 8px;
+  background: #0f1419;
+  overflow: hidden;
+}
+
+.array-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  background: #1a1f29;
+  border-bottom: 1px solid #2a3038;
+}
+
+.array-box-header .path {
+  color: #a0a8b0;
+  font-size: 12px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  word-break: break-all;
+  overflow: hidden;
+}
+
+.copy-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid #4d9fff;
+  color: #4d9fff;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.copy-btn:hover {
+  background: rgba(77, 159, 255, 0.12);
+}
+
+.array-pre {
+  margin: 0;
+  padding: 10px 12px;
+  height: 420px;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9aa4b2;
+  white-space: pre;
+}
+
+/* 应用图标生成: Android / iOS / HarmonyOS platform tabs. */
+.plat-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.plat-tab {
+  padding: 8px 20px;
+  border-radius: 6px;
+  background: #1a1f29;
+  border: 1px solid #2a3038;
+  color: #a0a8b0;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+  transition: all 0.15s;
+}
+
+.plat-tab:hover {
+  background: #232936;
+  color: #e6e6e6;
+}
+
+.plat-tab.active {
+  background: #232936;
+  color: #fff;
+  border-color: #4d9fff;
+}
+
+.option-tip {
+  color: #888;
+  font-size: 12px;
+  flex: 1;
+  line-height: 1.5;
+}
+
+.form-row input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 2px;
+  background: #0f1419;
+  border: 1px solid #3a4250;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* Compact preview box (icon look) unlike the tall image preview. */
+.preview.mini {
+  min-height: 0;
+  padding: 12px;
+}
+
+.mini-cap {
+  color: #888;
+  font-size: 11px;
+  margin-top: 6px;
+}

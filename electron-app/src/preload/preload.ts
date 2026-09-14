@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFile: (filters?: string) => ipcRenderer.invoke('dialog:openFile', filters),
   saveFile: (defaultName?: string) => ipcRenderer.invoke('dialog:saveFile', defaultName),
   revealInFolder: (p: string) => ipcRenderer.invoke('shell:reveal', p),
+  readFile: (p: string) => ipcRenderer.invoke('fs:readFile', p),
+  writeFile: (p: string, data: Uint8Array) => ipcRenderer.invoke('fs:writeFile', p, data),
   sdkInit: () => ipcRenderer.invoke('sdk:init'),
   probeVideo: (input: string) => ipcRenderer.invoke('sdk:probe', input),
   videoToGif: (input: string, output: string, options: any, pid: string) =>

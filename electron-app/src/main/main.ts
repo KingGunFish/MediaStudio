@@ -317,6 +317,35 @@ ipcMain.handle('shell:reveal', (_e, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
 
+// Read a whole file as bytes (used by the renderer to decode images without
+// depending on file:// page access). Returns null when missing/unreadable.
+ipcMain.handle('fs:readFile', (_e, p: string) => {
+  try {
+    if (!p || !fs.existsSync(p) || !fs.statSync(p).isFile()) return null;
+    return fs.readFileSync(p);
+  } catch (e) {
+    log(`fs:readFile FAILED ${p}: ${(e as Error).message}`);
+    return null;
+  }
+});
+
+// Write bytes to disk (renderer-side generated BMP / .c / .bin outputs).
+// Creates the parent directory when missing, mirroring the SDK handlers.
+ipcMain.handle('fs:writeFile', (_e, p: string, data: Uint8Array) => {
+  try {
+    if (!p) return { ok: false, error: '输出路径为空' };
+    const dir = path.dirname(p);
+    if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(p, Buffer.from(data));
+    log(`fs:writeFile OK ${p} (${data.length} bytes)`);
+    return { ok: true };
+  } catch (e) {
+    const msg = (e as Error).message;
+    log(`fs:writeFile FAILED ${p}: ${msg}`);
+    return { ok: false, error: msg };
+  }
+});
+
 // Resolve the ffprobe binary. The bundled SDK already depends on ffmpeg/ffprobe
 // being reachable (it shells out to them), so we first try PATH, then a copy
 // placed next to ms_demo in resources/sdk.

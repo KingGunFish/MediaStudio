@@ -4,9 +4,11 @@ import { init, videoToGif, keying } from './lib/mediaStudio';
 import type { KeyingOptions, VideoToGifOptions, InitResult } from './types';
 import { ConverterPage } from './pages/Converter';
 import { KeyingPage } from './pages/Keying';
+import { MonoPage } from './pages/Mono';
+import { IconsPage } from './pages/Icons';
 import { SettingsPage } from './pages/Settings';
 
-type Tab = 'converter' | 'keying' | 'settings';
+type Tab = 'converter' | 'keying' | 'mono' | 'icons' | 'settings';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('converter');
@@ -24,13 +26,25 @@ export function App() {
           className={`nav-item ${tab === 'converter' ? 'active' : ''}`}
           onClick={() => setTab('converter')}
         >
-          视频 → GIF
+          视频转GIF
         </div>
         <div
           className={`nav-item ${tab === 'keying' ? 'active' : ''}`}
           onClick={() => setTab('keying')}
         >
-          GIF 抠图
+          GIF抠图
+        </div>
+        <div
+          className={`nav-item ${tab === 'mono' ? 'active' : ''}`}
+          onClick={() => setTab('mono')}
+        >
+          图片转黑白
+        </div>
+        <div
+          className={`nav-item ${tab === 'icons' ? 'active' : ''}`}
+          onClick={() => setTab('icons')}
+        >
+          应用图标生成
         </div>
         <div
           className={`nav-item ${tab === 'settings' ? 'active' : ''}`}
@@ -49,6 +63,8 @@ export function App() {
         )}
         {initResult?.ok && tab === 'converter' && <ConverterPage />}
         {initResult?.ok && tab === 'keying' && <KeyingPage />}
+        {initResult?.ok && tab === 'mono' && <MonoPage />}
+        {initResult?.ok && tab === 'icons' && <IconsPage />}
         {initResult?.ok && tab === 'settings' && <SettingsPage />}
       </main>
     </div>

@@ -13,6 +13,8 @@ declare global {
       keying: (input: string, output: string, options: KeyingOptions, progressId: string) => Promise<any>;
       onProgress: (pid: string, cb: (data: { value: number; message: string }) => void) => () => void;
       onDone: (pid: string, cb: (result: MediaResult) => void) => () => void;
+      readFile: (path: string) => Promise<Uint8Array<ArrayBuffer> | null>;
+      writeFile: (path: string, data: Uint8Array) => Promise<{ ok: boolean; error?: string }>;
     };
   }
 }
@@ -93,4 +95,18 @@ export async function keying(
   } finally {
     offProgress();
   }
+}
+
+// Byte-level file IO for renderer-side conversions (image -> 1-bit BMP/array).
+export async function readFileBytes(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!window.electronAPI?.readFile) return null;
+  return window.electronAPI.readFile(path);
+}
+
+export async function writeFileBytes(
+  path: string,
+  data: Uint8Array,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!window.electronAPI?.writeFile) return { ok: false, error: 'electronAPI not available' };
+  return window.electronAPI.writeFile(path, data);
 }
