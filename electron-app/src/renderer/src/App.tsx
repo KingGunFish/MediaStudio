@@ -5,10 +5,11 @@ import type { KeyingOptions, VideoToGifOptions, InitResult } from './types';
 import { ConverterPage } from './pages/Converter';
 import { KeyingPage } from './pages/Keying';
 import { MonoPage } from './pages/Mono';
+import { CropPage } from './pages/Crop';
 import { IconsPage } from './pages/Icons';
 import { SettingsPage } from './pages/Settings';
 
-type Tab = 'converter' | 'keying' | 'mono' | 'icons' | 'settings';
+type Tab = 'converter' | 'keying' | 'mono' | 'crop' | 'icons' | 'settings';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('converter');
@@ -41,6 +42,12 @@ export function App() {
           图片转黑白
         </div>
         <div
+          className={`nav-item ${tab === 'crop' ? 'active' : ''}`}
+          onClick={() => setTab('crop')}
+        >
+          图片裁剪
+        </div>
+        <div
           className={`nav-item ${tab === 'icons' ? 'active' : ''}`}
           onClick={() => setTab('icons')}
         >
@@ -64,6 +71,7 @@ export function App() {
         {initResult?.ok && tab === 'converter' && <ConverterPage />}
         {initResult?.ok && tab === 'keying' && <KeyingPage />}
         {initResult?.ok && tab === 'mono' && <MonoPage />}
+        {initResult?.ok && tab === 'crop' && <CropPage />}
         {initResult?.ok && tab === 'icons' && <IconsPage />}
         {initResult?.ok && tab === 'settings' && <SettingsPage />}
       </main>
