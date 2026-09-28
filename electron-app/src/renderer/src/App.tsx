@@ -6,10 +6,11 @@ import { ConverterPage } from './pages/Converter';
 import { KeyingPage } from './pages/Keying';
 import { MonoPage } from './pages/Mono';
 import { CropPage } from './pages/Crop';
+import { GlassesPage } from './pages/Glasses';
 import { IconsPage } from './pages/Icons';
 import { SettingsPage } from './pages/Settings';
 
-type Tab = 'converter' | 'keying' | 'mono' | 'crop' | 'icons' | 'settings';
+type Tab = 'converter' | 'keying' | 'mono' | 'crop' | 'glasses' | 'icons' | 'settings';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('converter');
@@ -48,6 +49,12 @@ export function App() {
           图片裁剪
         </div>
         <div
+          className={`nav-item ${tab === 'glasses' ? 'active' : ''}`}
+          onClick={() => setTab('glasses')}
+        >
+          图片去眼镜
+        </div>
+        <div
           className={`nav-item ${tab === 'icons' ? 'active' : ''}`}
           onClick={() => setTab('icons')}
         >
@@ -72,6 +79,7 @@ export function App() {
         {initResult?.ok && tab === 'keying' && <KeyingPage />}
         {initResult?.ok && tab === 'mono' && <MonoPage />}
         {initResult?.ok && tab === 'crop' && <CropPage />}
+        {initResult?.ok && tab === 'glasses' && <GlassesPage />}
         {initResult?.ok && tab === 'icons' && <IconsPage />}
         {initResult?.ok && tab === 'settings' && <SettingsPage />}
       </main>
