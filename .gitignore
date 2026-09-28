@@ -51,3 +51,4 @@ electron-app/resources/sdk/ffplay.exe
 
 # partial downloads (resume artifacts)
 ffmpeg-lgpl.part.zip
+.zcode/
