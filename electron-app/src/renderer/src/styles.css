@@ -606,16 +606,6 @@ body {
   font-size: 13px;
 }
 
-.btn.small.active {
-  background: #232936;
-  color: #fff;
-  border-color: #4d9fff;
-}
-
-.glasses-stage canvas {
-  touch-action: none;
-}
-
 .crop-primary {
   margin-left: auto;
 }
