@@ -1,0 +1,11 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "verification entry",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "libmsverify.so": "file:./src/main/cpp/types/libmsverify"
+  }
+}

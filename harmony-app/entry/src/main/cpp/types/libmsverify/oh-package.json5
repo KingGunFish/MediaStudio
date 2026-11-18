@@ -1,0 +1,6 @@
+{
+  "name": "libmsverify.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Media Studio HarmonyOS port verification native module"
+}

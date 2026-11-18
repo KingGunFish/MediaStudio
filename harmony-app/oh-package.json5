@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "media-studio-harmony",
+  "version": "1.0.0",
+  "description": "Media Studio for HarmonyOS PC (2in1)",
+  "dependencies": {},
+  "devDependencies": {}
+}

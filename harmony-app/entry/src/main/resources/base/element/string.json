@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "verification module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "verification entry ability"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "MS Verify"
+    }
+  ]
+}
