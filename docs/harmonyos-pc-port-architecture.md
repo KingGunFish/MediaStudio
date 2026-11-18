@@ -1,0 +1,1078 @@
+# Media Studio 移植 HarmonyOS PC —— 架构设计方案
+
+> 版本：v1.2（方案验证 + M1 引擎移植实测）
+> 日期：2026-11-18
+> 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1 引擎移植已跑通端到端，输出与 Windows 版逐像素一致（含自动旋转）**，详见 §10 验证报告
+
+---
+
+## 0. 结论摘要
+
+**一句话结论：这不是一次 UI 框架替换，而是「把 10 项平台能力在鸿蒙 PC 上重新落地」的重工程；其中 80% 的代码可以复用，80% 的风险集中在 ffmpeg 引擎与进程模型上。**
+
+| 维度 | 结论 |
+|---|---|
+| **推荐方案** | **方案 A：ArkTS/ArkUI 原生重写 UI + NAPI 原生模块承载 C++ 引擎**（含 ffmpeg） |
+| **是否可行** | 完全可行，且**关键路径已本机实测通过**（§10）：NAPI 桥接、原生子进程、Canvas 像素读写、musl zlib、ffmpeg OHOS 交叉编译 |
+| **不可行点** | 仅「像 Electron 那样 spawn 一个独立 ffmpeg 可执行文件」这一条路走不通（鸿蒙无任意可执行文件执行权限）——但**等价的子进程模型已被实测证明可行** |
+| **核心工作量** | 引擎移植 ≈ 12–18 人日；UI 重写 ≈ 15–20 人日；系统接线与上架 ≈ 8–13 人日。合计 **35–50 人日**（单人） |
+| **最大风险** | ① 引擎内核改造（spawn → 进程内 libav*） ② WYSIWYG 预览的帧来源 ③ libx264→libopenh264 的行为变更 |
+| **可直接复用的资产** | `sdk/` 的 C++ 滤镜逻辑（1229 行）几乎原样保留；`mono1bpp.ts` / `pngrgb.ts` / `cropMath.ts`（443 行）几乎逐行翻译为 ArkTS；本机已有跑通的鸿蒙 NAPI 原生模块模板（见 `jieya-harmony`） |
+
+### 0.1 v1.1 实测验证结论速览
+
+| # | 待验证项 | v1.0 状态 | **v1.1 实测结论** |
+|---|---|---|---|
+| V1 | ArkUI Canvas 像素读写 | 待验证 | ✅ **通过**：`getImageData`/`putImageData` 读写像素完全正确（`rgba(255,0,0,255)` / `rgba(0,0,255,255)`） |
+| V3 | 原生子进程可用性 | 存疑 | ✅ **通过**：`OH_Ability_StartNativeChildProcess` 在 2in1 上对三方应用返回 `rc=0`，子进程真实执行 |
+| V4 | PNG 所需 zlib 流 | 待验证 | ⚠️ **结论修正**：`@ohos.zlib` **没有**裸 buffer 接口；原生 `libz` 输出 `78 9C`（zlib/RFC1950）→ **PNG 编码必须下沉到原生层** |
+| V5 | picker PC 端 API | 待验证 | ✅ **通过**：`DocumentViewPicker` + `fileSuffixFilters` + `maxSelectNumber` 存在（API 10+/12+） |
+| V7 | 包体上限 | 待验证 | 🟡 **部分闭环**：含 ffmpeg 的 HAP 实测 **19.08 MiB**（20,008,188 字节），体积无压力 |
+| V8 | ffmpeg 交叉编译 | 风险 R-01 | ✅ **通过**：x86_64 与 aarch64 **双架构**构建成功，LGPL 许可，所需滤镜集全部启用 |
+| **V11** | **滤镜字符串能否原样执行** | 未知 | ✅ **通过**：`mask_builder.cpp` 的完整 `filter_complex` 在设备上解析出 **12 个滤镜**，alpha 表达式求值正确（背景→0，前景→255） |
+| **V12** | **设备端能否真实编码 GIF** | 未知 | ✅ **通过**：设备上实际编码出 2 帧动画 GIF，`GIF89a` 头，1053 字节 |
+| V2/V6/V9/V10 | 预览/拖拽/定位/CPU 配额 | 待验证 | 仍未验证（需交互或文档核对），保持开放 |
+
+> **最重要的一条**：V11 + V12 合起来证明 —— **引擎改造只需替换「执行器」，滤镜逻辑与流水线可以原样迁移**。这是整个方案最大的工作量假设，现已被实测证伪为「成立」。
+
+### 0.2 v1.2 M1 引擎移植实测结论速览
+
+M1 = 把 Windows 版的「spawn ffmpeg.exe」替换为「进程内 libav*」，并让 **C1 视频→GIF 整条流水线**在设备上产出与 Windows 版一致的结果。
+
+| # | 验证项 | v1.1 状态 | **v1.2 实测结论** |
+|---|---|---|---|
+| M1-a | 进程内执行器 | 未实现 | ✅ **通过**：`sdk/src/engine/ms_inproc_exec.cpp` 复刻 CLI 的自动旋转、输入绑定、格式协商三条隐式行为 |
+| M1-b | C1 流水线端到端 | 未实现 | ✅ **通过**：设备上产出 GIF，容器统计与 Windows 黄金件**逐字段一致**（480×360 / 24 帧 / r_frame_rate 12/1 / duration 2.0） |
+| M1-c | **像素级对拍** | — | ✅ **通过**：解码为 rawvideo rgb24 后**逐字节比对，0 差异**（12,441,600 字节；中间 mkv 6,220,800 字节亦 0 差异） |
+| M1-d | **R-03 自动旋转** | ⬜ 最高风险 | ✅ **已解除**：竖拍样例（90° display matrix）在设备上输出 **480×640**（而非 480×360），与宿主 CLI 黄金件**像素 0 差异**（22,118,400 字节） |
+| M1-e | GIF 帧数统计 | `frames=0` | ✅ **已修复**：根因是 OHOS 精简构建漏配 `--enable-parser=gif`（见 §10.5 #12），现为 `frames=24 fps=12` |
+| M1-f | aarch64 真机 | 未上真机 | ⬜ 仍开放（R-13），上架前必做 |
+
+> **M1-c + M1-d 合起来的意义**：本移植最大的工作量假设（"引擎只需换执行器"）与最大的静默错误风险（自动旋转）**同时被证伪为"成立"**。至此，C1 功能在鸿蒙侧已达到「与 Windows 版可替换」的水准。
+
+---
+
+## 1. 现状盘点（代码级）
+
+### 1.1 现有分层
+
+```
+electron-app/
+├── src/main/          Electron 主进程（TypeScript，~900 行）
+│   ├── main.ts          窗口、IPC 处理器、SDK worker 子进程管理
+│   ├── videoCrop.ts     ffmpeg 滤镜链生成 + 进度解析
+│   └── logger.ts        日志（%TEMP%\media-studio.log）
+├── src/preload/       contextBridge 暴露 window.electronAPI（14 个方法）
+├── src/renderer/      React + Vite 渲染层（4132 行，含 CSS 692）
+│   ├── pages/           Converter / Crop / Icons / Keying / Mono / VideoCrop / Settings
+│   └── lib/             cropMath / mono1bpp / pngrgb / appicons / mediaStudio
+└── resources/sdk/     ffmpeg.exe(145MB) + ffprobe.exe(145MB) + libmedia_studio.dll + ms_demo.exe
+
+sdk/                  独立 C++ SDK（1229 行），C ABI（media_studio.h）
+├── src/ffmpeg/         executor.cpp —— 以子进程方式调用 ffmpeg/ffprobe
+├── src/gif_keying/     mask_builder.cpp —— 生成 geq/alphamerge 滤镜表达式
+└── src/video_to_gif/   video_to_gif.cpp —— 三段式 GIF 编码流水线
+```
+
+### 1.2 能力清单：10 项能力及其归属
+
+把每个页面拆到「能力」粒度，是判断复用度的基础。
+
+| # | 能力 | 现状实现 | 依赖 | 移植难度 |
+|---|---|---|---|---|
+| C1 | 视频 → 透明 GIF | `sdk/src/video_to_gif/` + ffmpeg | ffmpeg（palettegen/paletteuse/ffv1/split/trim/reverse/concat） | 中（引擎改造） |
+| C2 | GIF 抠像/去水印 | `sdk/src/gif_keying/mask_builder.cpp` + ffmpeg | ffmpeg（geq/alphaextract/alphamerge） | 中（引擎改造） |
+| C3 | 视频裁剪重编码 | `main/videoCrop.ts` | ffmpeg（crop/scale/pad）+ libx264 | 中（引擎改造 + 编码器换人） |
+| C4 | 视频探针 | `main.ts` `sdk:probe` | ffprobe（JSON 输出） | 低（并入引擎，约 120 行） |
+| C5 | 图像交互裁剪 | `pages/Crop.tsx` + `lib/cropMath.ts` | 浏览器 Canvas 2D | 中（换 ArkUI Canvas） |
+| C6 | 移动端图标批量生成 | `pages/Icons.tsx` + `lib/appicons.ts` | Canvas 2D + 自研 PNG 编码器 | 中（换 ArkUI Canvas + PixelMap） |
+| C7 | 1-bit 单色化 / BMP / C 数组 | `lib/mono1bpp.ts`（206 行） | **无**（纯函数） | **低（逐行翻译）** |
+| C8 | PNG 无 alpha 编码器 | `lib/pngrgb.ts`（84 行） | `CompressionStream('deflate')` | 低（换 @ohos.zlib） |
+| C9 | 文件选择 / 保存 / 定位 | `dialog:*` / `shell:reveal` / `fs:*` IPC | Electron dialog & fs | 低（换 picker / fileIo） |
+| C10 | 拖拽导入 + 进度 + 取消 | `components/Dropzone.tsx` + `progress:*`/`done:*` IPC | Electron DnD | 中（换 ArkUI 拖拽框架） |
+
+**结论：**
+- **纯搬运（几乎零改动）**：C7、C8、C4，以及 C5/C6 中的几何与规格表（`cropMath.ts` 153 行、`appicons.ts` 262 行）。
+- **必须重写载体、保留算法**：C1、C2、C3 的滤镜表达式（`mask_builder.cpp` 生成的 `if(...)`/`geq` 字符串、`video_crop.ts` 的 crop→scale→pad 三段链）——**这是本方案保真度的核心资产，不应改写成 API 调用**。
+- **必须换平台实现**：C5、C6、C9、C10。
+
+### 1.3 现状的三个硬约束（移植时必须正面处理）
+
+**① 引擎通过 spawn 外部可执行文件驱动**
+
+`sdk/src/ffmpeg/executor.cpp` 在 Windows 下用 `CreateProcessW` 拉起 `ffmpeg.exe`，把参数数组拼成命令行；`main/videoCrop.ts` 同理。鸿蒙没有这条路径（见 §2.3 红线 R1）。
+
+**② 渲染层深度依赖 DOM Canvas**
+
+`Crop.tsx` / `Icons.tsx` / `Mono.tsx` / `VideoCrop.tsx` 共 65 处 Canvas 2D 调用（`getContext('2d')`、`toBlob`、`createImageBitmap`）。ArkUI 没有 DOM Canvas，需要映射到 ArkUI `Canvas` 组件 + `PixelMap`。
+
+**③ 体积与许可**
+
+`resources/sdk/` 下两个静态 GPL 构建共 **291 MB**（实测 `ffmpeg.exe` 145 MB，配置含 `--enable-gpl --enable-libx264 --enable-libx265`）。鸿蒙版需重新裁剪构建并明确许可策略（见 §5.3）。
+
+---
+
+## 2. 目标平台约束（HarmonyOS PC / 2in1）
+
+### 2.1 运行模型差异
+
+| 维度 | Electron（现状） | HarmonyOS PC（目标） |
+|---|---|---|
+| 运行时 | Chromium + Node.js | ArkTS/ArkUI 运行时 + ArkTS-Native，无 Node、无 Chromium |
+| 进程 | 任意 spawn 外部 exe | **不能**执行任意可执行文件；只能加载 `.so` |
+| UI | DOM + CSS | 声明式 ArkUI 组件树 |
+| 2D 绘制 | DOM `<canvas>` | ArkUI `Canvas` 组件 + `PixelMap` |
+| 文件访问 | Node `fs` 全权限 | 沙箱 + `picker` 授权（URI 授权模式） |
+| 打包 | NSIS / zip | HAP（.hap），签名后分发 |
+| 窗口 | `BrowserWindow` | `@ohos.window`（最大化/最小化/置顶/自定义标题栏） |
+
+### 2.2 能力对照表（Electron API → HarmonyOS API）
+
+| Electron 用法 | 位置 | HarmonyOS 对应 | 备注 |
+|---|---|---|---|
+| `BrowserWindow` | main.ts:634 | `Window` / `windowStage.loadContent` | PC 端支持最大化、置顶、自定义标题栏（API 20+ 有窗口增强） |
+| `ipcMain.handle` | main.ts:263+ | NAPI 模块（`napi_create_function` + `napi_async_work`） | 已验证可用，见 §4.3 |
+| `ipcRenderer.invoke` | preload.ts | NAPI 直接调用（ArkTS 侧是普通函数调用） | 无需桥接层 |
+| `contextBridge.exposeInMainWorld` | preload.ts | `types/libmedia_studio/index.d.ts` 声明 + 直接 import | 已验证可用 |
+| `event.sender.send(progress)` | main.ts:496 | `napi_threadsafe_function` 回抛 JS 线程 | jieya-harmony 已有成熟实现 |
+| `dialog.showOpenDialog` | main.ts:311 | `picker.DocumentViewPicker` | 需处理 URI → fd 授权 |
+| `dialog.showSaveDialog` | main.ts:320 | `picker.DocumentSavePicker` | 同上 |
+| `shell.showItemInFolder` | main.ts:328 | `fileIo` + `Want`（拉起文件管理器定位） | 需实测 PC 行为（见 V9） |
+| `fs.readFileSync` / `writeFileSync` | main.ts:333/345 | `fileIo.openSync/readSync/writeSync` 或引擎内直读 | 引擎内直读更优（免 URI 转换） |
+| `child_process.spawn` | main.ts:180/400 | **不可用**（红线 R1） | 改为进程内执行器或 NativeChildProcess |
+| `<canvas>` 2D | Crop/Icons/Mono/VideoCrop | ArkUI `Canvas` + `CanvasRenderingContext2D` | 需验证像素级读写 API（V1） |
+| `canvas.toBlob('image/png')` | Icons.tsx:147 | `image.createImagePacker().packing(pixelMap,'image/png')` | |
+| `createImageBitmap(Blob)` | Crop/Icons/Mono | `image.createImageSource(buf).createPixelMap()` | |
+| `CompressionStream('deflate')` | pngrgb.ts | `@ohos.zlib` | 需确认 zlib(RFC1950) 模式（V4） |
+| `<video>` 预览帧 | VideoCrop.tsx | **不能直接绘制**（红线 R3） | 改由引擎解码单帧 |
+| HTML5 拖拽 | Dropzone.tsx | ArkUI `onDragStart` / `onDrop` + `drag` 框架 | 需验证 PC 外部拖入（V6） |
+| `%TEMP%\*.log` | logger.ts | `hilog` + 应用沙箱 `filesDir` | |
+
+### 2.3 三条红线
+
+**R1 —— 不能 spawn 独立可执行文件。**
+逐一排除：
+
+| 手段 | 结论 | 依据 |
+|---|---|---|
+| `@ohos.process.runCmd` | ❌ 不可用 | `@systemapi` + 仅系统应用；需 Full SDK 且需关闭 SELinux |
+| `childProcessManager.startArkChildProcess` | ❌ 不匹配 | 只能启动 **ArkTS 入口**（`.ets`），无法承载 C++ 引擎 |
+| `OH_Ability_StartNativeChildProcess` | ✅ **可用（已实测）** | API 13+，**仅 2in1 / 平板**；加载 `.so` 并调导出入口 + fd 管道 + IPC。**本机 2in1 模拟器实测 `rc=0`，子进程真实执行**（§10.3） |
+| 进程内执行器（NAPI `napi_async_work`） | ✅ **可用（已实测）** | 无设备形态限制，与 jieya-harmony 成熟模式一致；本机实测 ArkTS↔C++ 调用正常 |
+
+> **重要修正（v1.1 实测）**：v1.0 曾把 `OH_Ability_StartNativeChildProcess` 列为「仅 2in1/平板、可能不可用」的备选。实测证明它在 **2in1 上对三方应用完全可用**——这意味着 Electron 版「spawn 一个 worker 进程 + JSON-lines 协议」的架构可以 **1:1 迁移**，不必退化为进程内执行。详见 §4.2 与 §10.3。
+
+**R2 —— 没有 GIF 编码器。**
+鸿蒙媒体框架（AVPlayer / AVCodec / AVTranscoder）**不提供 GIF 编码**，也无法表达 `geq` → `alphaextract` → `alphamerge` → `palettegen`/`paletteuse` 这类像素级滤镜图。C1/C2/C3 **必须自带 ffmpeg**。（OpenHarmony 官方 third_party_ffmpeg 已有 OHOS 适配，构建目标为 `libohosffmpeg.so`。）
+
+**R3 —— ArkUI `Video` 组件不能作为 Canvas 绘制源。**
+`VideoCrop.tsx` 的 WYSIWYG 预览依赖「把 `<video>` 逐帧画进 canvas」。鸿蒙侧 `Video` 是独立渲染组件，无法 `drawImage` 进 Canvas。替代方案见 §5.5。
+
+---
+
+## 3. 方案选型
+
+### 3.1 三个候选方案
+
+**方案 A（推荐）：ArkTS 原生重写 + NAPI C++ 引擎**
+
+ArkUI 重写全部 7 个页面；C++ 引擎（ffmpeg + 现有 SDK 逻辑）编译为 `libmedia_studio.so`，通过 NAPI 暴露给 ArkTS。进程内 `napi_async_work` 执行重活。
+
+- ✅ 体验最接近原生桌面应用；PC 窗口/键鼠/多窗口能力齐备；性能与体积可控
+- ✅ 引擎能力 100% 保真（滤镜字符串原样保留）
+- ✅ 与现有 `jieya-harmony` 工程模板完全同构（同一套 NAPI 骨架、CMake 组织、`.d.ts` 声明方式）
+- ❌ UI 层 4132 行需重写；ArkTS 有严格静态类型约束（无 `any`、无动态属性），移植时需补类型
+- ❌ 一次性投入较大
+
+**方案 B：ArkWeb 壳 + 现有 React UI**
+
+把 Vite 产物放入 `rawfile/`，ArkWeb 用「虚拟 HTTPS 域名 + `onInterceptRequest`」方式加载以规避 file 协议跨域；JS Bridge 替换 `window.electronAPI`。
+
+- ✅ 复用 4132 行 React 代码，UI 零重写，最快出可用版本（约 8–12 人日）
+- ✅ 适合作为**可行性验证**（先验证 ffmpeg .so 在鸿蒙 PC 上的编译、性能、稳定性）
+- ❌ 拖拽、`<video>` 本地源、`<canvas>` 高频交互在 ArkWeb PC 上的行为受限（需实测）
+- ❌ 桌面原生感弱（自绘标题栏、右键菜单、快捷键、文件对话框都要自己造）
+- ❌ 与系统视觉规范存在割裂，长期维护双份 UI
+
+**方案 C：纯 ArkTS 重写引擎（用系统媒体框架替代 ffmpeg）**
+
+- ❌ **否决**：R2 已排除；且 `geq`/`alphamerge`/`palettegen` 无系统等价物
+
+### 3.2 决策矩阵
+
+| 评估项 | 方案 A | 方案 B | 方案 C |
+|---|---|---|---|
+| UI 复用度 | 0%（重写） | ~95% | 0% |
+| 引擎保真度 | 100% | 100% | 不可行 |
+| 桌面体验 | 原生 | 折中 | — |
+| 首个可用版本 | ~35–50 人日 | ~8–12 人日 | — |
+| 长期维护成本 | 低（单栈） | 高（双栈） | — |
+| 上架合规友好度 | 高 | 中 | — |
+
+### 3.3 推荐路线：两阶段，A 为终态
+
+```
+阶段 0（2–3 人日）  可行性验证
+    └─ 最小鸿蒙工程 + ffmpeg 交叉编译 + NAPI 冒烟（转一个 GIF）
+    └─ 产出：ffmpeg OHOS 构建脚本、libmedia_studio.so、NAPI 骨架
+
+阶段 1（8–12 人日） ArkWeb 过渡版（可选）
+    └─ 若阶段 0 顺利且需尽早交付，可用 ArkWeb 壳先上功能
+    └─ 同时开始阶段 2 的 ArkUI 页面重写
+
+阶段 2（15–20 人日） ArkUI 原生重写
+    └─ 7 个页面 + 4 个 lib 模块翻译 + Canvas 交互 + 拖拽
+
+阶段 3（5–8 人日）  引擎收口 + 打磨 + 上架
+    └─ 进度/取消、错误提示、体积裁剪、签名、上架材料
+```
+
+> 若不想维护两套 UI，**跳过阶段 1**，阶段 0 完成后直接进入阶段 2。
+
+---
+
+## 4. 目标架构
+
+### 4.1 分层图
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  ArkUI 表现层（ArkTS）        harmony-app/entry/src/main/ets/     │
+│  ┌──────────┬──────────┬──────────┬──────────┬──────────┐      │
+│  │Converter │  Crop    │  Icons   │  Keying  │VideoCrop │      │
+│  │          │          │  Mono    │          │  Settings│      │
+│  └──────────┴────┬─────┴────┬─────┴──────────┴──────────┘      │
+│                  │          │                                     │
+│         ┌────────▼──────────▼─────────┐                           │
+│         │  common/  共享能力层         │                           │
+│         │  ├ FileService  (picker)    │                           │
+│         │  ├ ImageCanvas  (ArkUI Canvas 封装)                    │
+│         │  ├ ProgressBar / Dropzone   │                           │
+│         │  └ Transform (cropMath 移植版)                          │
+│         └────────┬────────────────────┘                           │
+└──────────────────┼────────────────────────────────────────────────┘
+                   │ NAPI 调用（同步接口 + 异步任务 + 进度回调）
+┌──────────────────▼────────────────────────────────────────────────┐
+│  NAPI 桥接层    harmony-app/entry/src/main/cpp/napi_init.cpp     │
+│  ├ ms_probe()              → 引擎                                  │
+│  ├ ms_video2gif(opts)      → 引擎（返回 taskId）                   │
+│  ├ ms_keying(opts)         → 引擎                                  │
+│  ├ ms_videocrop(opts)      → 引擎                                  │
+│  ├ ms_cancel(taskId)                                                │
+│  └ ms_decodeFrame(path,t)  → 返回 PixelMap（供预览，见 §5.5）     │
+│  进度：napi_threadsafe_function → ArkTS 线程                        │
+└──────────────────┬────────────────────────────────────────────────┘
+┌──────────────────▼────────────────────────────────────────────────┐
+│  引擎层（新增，不改 Windows 既有实现）  sdk/src/engine/            │
+│  ├ engine_cli_exec.cpp    ★ 进程内 ffmpeg CLI 子集执行器          │
+│  │    ├ 解析 argv → libavformat/libavfilter/libavcodec          │
+│  │    └ avfilter_graph_parse_ptr() 解析滤镜字符串（保真关键）      │
+│  ├ engine_probe.cpp       探针（替代 ffprobe JSON）                │
+│  ├ engine_decode_frame.cpp 单帧解码（预览用）                      │
+│  └ 复用：gif_keying/ video_to_gif/ 的滤镜表达式生成逻辑            │
+└──────────────────┬────────────────────────────────────────────────┘
+┌──────────────────▼────────────────────────────────────────────────┐
+│  第三方：FFmpeg（OHOS aarch64 构建，LGPL）                         │
+│  libavformat / libavcodec / libavfilter / libavutil / libswscale  │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 进程与线程模型
+
+**v1.1 修订**：实测证明 **两种模式都可行**，因此按「先用最简、预留升级」排定：
+
+```
+【一期 · 进程内执行】
+ArkUI 主线程  ←→  napi_async_work（线程池）  ←→  ffmpeg（内部再开多线程）
+                 进度经 napi_threadsafe_function 回抛
+
+【二期 · 进程隔离（已验证可行，随时可切）】
+ArkUI 主线程  ←→  NativeChildProcess_Args/FD  ←→  子进程（加载 libmsworker.so:Main）
+                        ↑ 与现状 ms_demo 完全同构：stdin/stdout 走 JSON-lines
+```
+
+**选型理由**
+
+| 维度 | 进程内 async_work | NativeChildProcess 子进程 |
+|---|---|---|
+| 实现复杂度 | 低（jieya-harmony 已有成熟模板） | 中（需实现 fd 管道与 IPC 握手） |
+| 崩溃隔离 | ❌ ffmpeg 崩溃会带崩主进程 | ✅ 天然隔离 |
+| 取消语义 | ✅ 任务表 + 解码循环检查 | ✅ 杀子进程 |
+| 设备限制 | 无 | **仅 2in1 / 平板**（实测 2in1 通过） |
+| 与现状架构同构度 | 中 | **高**（协议可原样保留） |
+| 多任务并发 | 受线程池与 CPU 配额限制 | 子进程隔离，互不干扰 |
+
+**推荐路径**：
+1. 一期用**进程内 `napi_async_work`**——实现最快，jieya-harmony 已验证的模式；崩溃风险靠「ffmpeg 对损坏输入返回错误码而非崩溃」来兜底。
+2. `engine_iface.h` 抽象出 `run(args, progress)`，**二期可零成本切到子进程模式**：协议沿用现状 `SdkRequest/SdkResult` 的 JSON-lines，**引擎侧无需改协议**，只换承载方式。
+
+**后台存活约束（必须处理）**：用户切走窗口或锁屏时，鸿蒙会冻结/回收应用进程。长视频转 GIF 必须在「用户离开」场景下继续，需要申请长时任务（`KEEP_BACKGROUND_RUNNING` + `backgroundModes`）。见 §7 风险 R-07。
+
+### 4.3 数据通道与协议
+
+沿用现有 `SdkRequest` / `SdkResult` 的 JSON 语义，但改为 NAPI 强类型接口：
+
+```ts
+// types/libmediastudio/index.d.ts
+export interface VideoToGifOptions {
+  width?: number; height?: number; fps?: number; maxColors?: number;
+  quality?: number; pingPong?: boolean; startSeconds?: number; endSeconds?: number;
+}
+export interface MediaResult {
+  code: number; message: string; frameCount: number;
+  outputWidth: number; outputHeight: number; fileSize: number;
+}
+export interface MediaStudio {
+  probe(input: string): Promise<ProbeResult>;
+  videoToGif(input: string, output: string, opts: VideoToGifOptions,
+             onProgress?: (p: number, msg: string) => void): Promise<MediaResult>;
+  keying(input: string, output: string, opts: KeyingOptions,
+         onProgress?: (p: number, msg: string) => void): Promise<MediaResult>;
+  videoCrop(input: string, output: string, opts: VideoCropOptions,
+            onProgress?: (p: number, msg: string) => void): Promise<MediaResult>;
+  cancel(taskId: number): void;
+  decodeFrame(input: string, timeMs: number): Promise<PixelMap>;
+}
+```
+
+`KeyingOptions` / `VideoCropOptions` 字段与 `electron-app/src/renderer/src/types.ts` 保持一一对应，不做字段裁剪 —— 保证两端行为可对照。
+
+### 4.4 引擎内核移植设计（本次移植的核心）
+
+#### 4.4.1 现状与目标
+
+现状：`executor.cpp` 拼命令行 → `CreateProcessW("ffmpeg.exe", args)` → 读 stdout/stderr 解析进度。
+目标：同样的参数数组 → 进程内 libav* 调用。
+
+**关键决策：用 `avfilter_graph_parse_ptr()` 解析滤镜字符串，而不是改写成 avfilter API 调用。**
+
+原因：`mask_builder.cpp` 生成的表达式极为精妙（`if(lt((r(X,Y)-231)^2+...,1500)+gt(r(X,Y),220)+...,0,255)` 形式的多条件 OR），改写为 C API 极易引入语义偏差；而 `avfilter_graph_parse_ptr()` 能直接吃字符串，**滤镜逻辑一行不改**。
+
+> ✅ **实测已证明（§10.3 P6）**：该滤镜串在 2in1 设备上被 `avfilter_graph_parse_ptr` 成功解析出 12 个滤镜，且 alpha 表达式求值结果与设计意图完全一致（背景色 → alpha 0，前景色 → alpha 255）。
+
+**实现时的两个 API 陷阱（实测踩到）**
+
+1. **FFmpeg 7.x 重构了 avfilter API**（与 6.x 不同）：
+   ```c
+   // FFmpeg 6.x
+   avfilter_graph_alloc_filter(&ctx, filt, "name");      // 返回 int
+   avfilter_init_dict(ctx, args_str, opts);
+   // FFmpeg 7.x  ← 实测
+   AVFilterContext *ctx = avfilter_graph_alloc_filter(graph, filt, "name");
+   avfilter_init_dict(ctx, &opts);                        // opts 是 AVDictionary**
+   ```
+   滤镜的 `r/g/b/a` 表达式要通过 `av_dict_set(&opts, "a", expr, 0)` 传入。
+2. **`geq` 的输出是 planar `gbrap`，不是 packed `rgba`**：alpha 位于独立平面 `data[3]`。按浏览器的 `data[0][3]` 读法会取到**绿道值**。正确做法是用 `av_pix_fmt_desc_get()` 判断 `AV_PIX_FMT_FLAG_PLANAR` 后再取 alpha 平面。
+   > 连带注意：`AVFrame::format` 在 7.x 里是 `int`（支持动态像素格式），传给 `av_pix_fmt_desc_get()` 前需显式转 `enum AVPixelFormat`。
+
+#### 4.4.2 需支持的 CLI 子集（当前代码实际用到的）
+
+| 参数 | 出现位置 | 处理方式 |
+|---|---|---|
+| `-i <path>` | 全部 | `avformat_open_input` + `avformat_find_stream_info` |
+| `-vf <chain>` | video_to_gif / gif_keying 的 palettegen 段 | `avfilter_graph_parse_ptr` 建 `buffer→…→buffer` |
+| `-filter_complex <fc>` | gif_keying 主链 / video_to_gif ping-pong 段 | 同上，多输入多输出 |
+| `-lavfi <chain>` | paletteuse 段 | 用 `avfilter_graph_alloc` + `buffer` 源模拟 lavfi 输入 |
+| `-map 0:v:0` / `-map 0:a:0?` | videoCrop | 显式建立流映射 |
+| `-c:v <enc>` | videoCrop（libx264）、paletteuse（gif） | `avcodec_find_encoder_by_name` |
+| `-pix_fmt <fmt>` | yuva420p / rgba | `AVFrame::format` |
+| `-crf <n>` / `-preset` | videoCrop | 映射到编码器私有选项（**LGPL 下需换成 libopenh264，见 §5.3**） |
+| `-ss` / `-to` | video_to_gif 片段截取 | `av_seek_frame` + `AVFormatContext` 时长限制 |
+| `-progress pipe:1` | videoCrop 进度 | 改为引擎内回调（按已编码帧数/总帧数） |
+| `-y` / `-v <loglevel>` | 全部 | 直接映射 |
+
+预计实现量 **800–1200 行 C++**。
+
+#### 4.4.3 两个必须显式复刻的语义（保真陷阱）
+
+**陷阱 1 —— 输入自动旋转。**
+ffmpeg CLI 会把输入的 rotation 元数据（`side_data_list` 中的 display matrix）作为 `transpose` 滤镜**自动注入到用户 `-vf` 之前**。因此 `crop`/`scale` 滤镜看到的是**旋转后的显示帧**。
+
+> 现状 `videoCrop.ts` 已依赖这一语义：渲染进程上报的 `sourceWidth/sourceHeight` 是**浏览器显示尺寸**（rotation-aware），并优先于 ffprobe 的编码尺寸。
+
+→ 进程内执行器**必须显式读取 display matrix 并插入 transpose**，否则竖拍手机视频的裁剪结果会与 Windows 版不一致（旋转 90° 时宽高互换，裁剪框会错位）。这是本次移植最容易出现「看起来能用但结果不同」的坑。
+
+**陷阱 2 —— palettegen/paletteuse 两趟流水线。**
+现有实现把调色板落盘为 PNG（`tmp_pal`）再作为第二趟输入。进程内可用 `image2` 封装写 PNG 到沙箱 `filesDir`，第二趟再读入 —— 行为与 Windows 版完全一致，且沙箱可写，无需特殊权限。
+
+#### 4.4.4 新增文件（不改动 Windows 既有实现）
+
+遵循 AGENTS.md 的开闭原则 —— 新增旁路，不原地改写：
+
+```
+sdk/src/engine/                ← 全新目录
+├── engine_iface.h             抽象接口：run(args, progress) → Result
+├── engine_cli_exec.cpp/.h     进程内 CLI 子集执行器（OHOS 用）
+├── engine_probe.cpp/.h        探针（替代 ffprobe）
+├── engine_decode_frame.cpp/.h 单帧解码（预览用）
+└── engine_task.cpp/.h         任务表 + 取消（对齐 jieya-harmony 模式）
+```
+
+`sdk/src/ffmpeg/executor.cpp`（Windows spawn 版）**保持不变**，仅在鸿蒙工程中不编译。
+
+### 4.5 ffmpeg 交叉编译方案
+
+**目标产物**：`libav*.so`（动态链接，便于 LGPL 合规的「可替换重链接」要求）或静态链入 `libmedia_studio.so`（需提供源码获取方式）。
+
+#### 4.5.0 已验证的本机工具链（v1.1 实测）
+
+| 组件 | 路径 / 版本 | 说明 |
+|---|---|---|
+| SDK | `D:\IDEs\command-line-tools\sdk` → **HarmonyOS 26.0.0 (API 26)** | `sdk-pkg.json` 实测 |
+| NDK clang | `sdk/default/openharmony/native/llvm/bin/clang.exe` → **clang 15.0.4** | 目标三元组 `aarch64-unknown-linux-ohos` / `x86_64-unknown-linux-ohos` |
+| sysroot | `sdk/default/openharmony/native/sysroot` | musl（`-D__MUSL__`），含 `libz.so`、`libchild_process.so`、`libace_napi.z.so` |
+| 2in1 模拟器 | 实例名 **MateBook Pro**，`HarmonyOS 7.0.0 (API 26)`，`x86_64`，3120×2080 | hdc 走 `127.0.0.1:5555`（`hdc tconn`） |
+| 构建宿主 | **Git Bash**（提供 sh/sed/awk/grep/perl）+ **mingw32-make 4.4.1** | 见下方「构建踩坑」 |
+| 打包签名 | 需 **Java**：DevEco 自带 JBR 25（`D:\ProgramFiles\DevEco Studio\jbr`） | 未在 PATH 上会导致 `spawn java ENOENT` |
+| 交叉编译封装 | `tools/ohos-cc-<arch>.sh`（新文件） | 见下方 |
+
+> **SDK 版本修正**：v1.0 假设 `5.0.0(12)` / `6.0.0(20)`。本机实际可用的是 **API 26（HarmonyOS 26.0.0）**，2in1 模拟器为 **API 26 的 HarmonyOS 7.0.0**。目标工程的 `compatibleSdkVersion` 应按此调整。
+
+#### 4.5.1 关键 configure 参数（已实测通过）
+
+```bash
+./configure \
+  --target-os=linux --arch=<aarch64|x86_64> \
+  --cross-prefix=<arch>-linux-ohos- --enable-cross-compile \
+  --cc=<arch>-linux-ohos-clang --cxx=<arch>-linux-ohos-clang++ \
+  --ar=<arch>-linux-ohos-ar --nm=<arch>-linux-ohos-nm \
+  --ranlib=<arch>-linux-ohos-ranlib --strip=<arch>-linux-ohos-strip \
+  --extra-cflags="-D__MUSL__ -fPIC" --extra-ldflags="-fuse-ld=lld" \
+  --enable-shared --disable-static \
+  --disable-programs --disable-doc --disable-debug \
+  --disable-gpl --disable-nonfree --enable-version3 \
+  --disable-network --disable-avdevice \
+  --disable-vulkan --disable-libdrm --disable-vaapi --disable-vdpau \
+  --disable-sdl2 --disable-xlib --disable-libxcb --disable-iconv \
+  --disable-everything \
+  --enable-protocol=file \
+  --enable-demuxer=mov,matroska,webm,avi,image2,gif,flv,mpegts,rawvideo \
+  --enable-muxer=mov,matroska,webm,avi,image2,gif,null,rawvideo \
+  --enable-decoder=h264,hevc,vp8,vp9,av1,mjpeg,png,gif,rawvideo,ffv1 \
+  --enable-parser=h264,hevc,vp8,vp9,av1,mjpeg,png,gif \
+  --enable-encoder=gif,ffv1,png,mjpeg,rawvideo \
+  --enable-bsf=h264_mp4toannexb \
+  --enable-swscale --enable-avfilter \
+  --enable-filter=fps,scale,format,split,trim,setpts,reverse,concat,\
+geq,alphaextract,alphamerge,palettegen,paletteuse,crop,pad,color,overlay,rotate,transpose,hflip,vflip,copy,null
+```
+
+> **v1.2 补充**：三个组件是后来才补上的，漏配任何一个都会**静默**出问题 ——
+> `--enable-decoder=ffv1`（中间文件是 ffv1，必须能回读）、`--enable-parser=gif`（否则 GIF 帧数统计为 0，见 §10.5 #12）、`--enable-filter=hflip,vflip`（CLI 的 180° 旋转分支）。
+> 权威副本以 `tools/build-ffmpeg-ohos.sh` 为准。
+
+**实测结果**：configure 成功，输出 **`License: LGPL version 3 or later`** ✅，且启用的滤镜集**恰好覆盖 Media Studio 的全部需求**：
+
+```
+alphaextract  alphamerge  geq  palettegen  paletteuse   ← 抠像 / 透明 GIF（C1/C2）
+fps  scale  format  split  trim  setpts  reverse  concat ← GIF 流水线（C1）
+crop  pad  rotate  transpose  hflip  vflip              ← 视频裁剪 + 自动旋转（C3）
+```
+
+> `--disable-everything` + 显式 enable 是**有意为之**：既把产物体积压到最小，也**用编译事实证明「Media Studio 所需的最小滤镜集在 OHOS 上可用」**。若后续要接 OpenH264，再补 `--enable-libopenh264`（需一并交叉编译 OpenH264 源码）。
+
+#### 4.5.2 构建踩坑（实测记录，必读）
+
+在 **Windows 宿主**上用 Git Bash + mingw32-make 交叉编译 ffmpeg，会连踩三个坑：
+
+| # | 症状 | 根因 | 处置 |
+|---|---|---|---|
+| 1 | `make: *** No rule to make target '/d/.../ffmpeg-7.1.1/Makefile'` | configure 生成的 stub Makefile 里 `include` 的是 **MSYS 风格路径** `/d/...`，native make 无法解析 | configure 后 `sed` 把 stub Makefile 首行改写成 `include D:/.../Makefile` |
+| 2 | `Makefile:42: /d/.../tools/Makefile: No such file or directory` | `ffbuild/config.mak` 里的 `SRC_PATH=/d/...` 同样是 MSYS 路径，被 `include $(SRC_PATH)/tools/Makefile` 使用 | configure 后 `sed` 把 `config.mak` 的 `SRC_PATH` / `SRC_LINK` 改写为 `D:/...`（**一处修复，全部 include 与 `-I` 同时生效**） |
+| 3 | `Unknown option "--disable-drm"` | ffmpeg 7.1 的选项名是 `--disable-libdrm` | 改用 `--disable-libdrm` |
+
+> **建议**：把这两个 `sed` 固化进 `tools/build-ffmpeg-ohos.sh`，并写明「路径改写是为适配 native make」。若换用 Linux 宿主（WSL + Linux OHOS NDK）则无需改写。
+
+#### 4.5.3 体积与其它约束
+
+| 项 | 现状（Windows） | 鸿蒙版（裁剪后） |
+|---|---|---|
+| ffmpeg | `ffmpeg.exe` 145 MB + `ffprobe.exe` 145 MB（GPL 全功能） | 仅 `libav*.so`，按 `--disable-everything` 裁剪后预计 **10–20 MB** |
+| ffprobe | 独立 exe 145 MB | **不需要** —— 探针逻辑并入引擎（§附录 A） |
+| 许可 | GPL（实测 `--enable-gpl`） | **LGPL v3+**（实测 configure 输出确认） |
+
+**其它约束**
+- `--disable-programs` 是**必选**：鸿蒙不能执行随包分发的可执行文件（R1），只需库。
+- 双架构：模拟器 `x86_64` + 真机 `aarch64`，release 包只留 `arm64-v8a`。
+- 动态链接（`.so`）满足 LGPL 的「允许用户替换该库」要求；`.so` 需随 HAP 打包在 `libs/<abi>/` 下。
+
+**已知参考**：
+- OpenHarmony 官方 `third_party_ffmpeg` 已有 OHOS 适配（`ohos_config.sh`，目标 `aarch64-linux-ohos`，产物 `libohosffmpeg.so`），可对照其工具链与补丁。
+- 社区已验证 FFmpeg 8.1 → 鸿蒙 PC（aarch64）交叉编译全流程。
+- 本机 `jieya-harmony/entry/src/main/cpp/third_party/` 已跑通 zlib/libarchive/7zip/zstd 的 OHOS 交叉编译（arm64-v8a + x86_64 双架构），**构建骨架可直接复用**。
+
+### 4.6 UI 层：ArkTS 模块划分
+
+与 React 页面一一对应，`lib/` 的纯算法模块**逐行翻译**：
+
+| React 源文件 | 行数 | ArkTS 目标 | 翻译策略 |
+|---|---|---|---|
+| `lib/cropMath.ts` | 153 | `common/Transform.ets` | **逐行翻译**（几何数学不变） |
+| `lib/mono1bpp.ts` | 206 | `common/Mono1bpp.ets` | **逐行翻译**（纯函数，无 DOM） |
+| `lib/pngrgb.ts` | 84 | `common/PngRgb.ets` | 翻译，压缩改用 `@ohos.zlib` |
+| `lib/appicons.ts` | 262 | `common/AppIcons.ets` | **逐行翻译**（纯数据表） |
+| `lib/mediaStudio.ts` | 128 | `common/MediaStudio.ets` | 改为直接调用 NAPI |
+| `types.ts` | 99 | `types/libmediastudio/index.d.ts` | 逐字段对应 |
+| `pages/Crop.tsx` | 499 | `pages/Crop.ets` | 重写，Canvas 交互重做 |
+| `pages/VideoCrop.tsx` | 613 | `pages/VideoCrop.ets` | 重写，预览改用引擎解码帧 |
+| `pages/Icons.tsx` | 365 | `pages/Icons.ets` | 重写，Canvas → ArkUI Canvas |
+| `pages/Mono.tsx` | 393 | `pages/Mono.ets` | 重写壳，算法复用 |
+| `pages/Converter.tsx` | 255 | `pages/Converter.ets` | 重写 |
+| `pages/Keying.tsx` | 195 | `pages/Keying.ets` | 重写 |
+| `pages/Settings.tsx` | 21 | `pages/Settings.ets` | 重写 |
+| `components/Dropzone.tsx` | 58 | `common/Dropzone.ets` | 重写（ArkUI 拖拽） |
+| `components/ProgressBar.tsx` | 18 | `common/ProgressBar.ets` | 重写 |
+| `App.tsx` | 84 | `EntryAbility.ets` + `Index.ets` | 重写（左侧导航 → ArkUI Tabs/侧边栏） |
+| `styles.css` | 692 | ArkUI 主题资源 + 组件样式 | 重做 |
+
+**Canvas 能力映射**
+
+| Web | ArkUI |
+|---|---|
+| `canvas.getContext('2d')` | `CanvasRenderingContext2D`（`Canvas` 组件的 `onReady` 回调内获取） |
+| `ctx.drawImage(bitmap, ...)` | `ctx.drawImage(pixelMap, x, y, w, h)`（`PixelMap` 可直接绘制） |
+| `ctx.getImageData(x,y,w,h)` | `ctx.getImageData(...)` 或 `pixelMap.readPixelsToBuffer(...)`（待验证 V1） |
+| `ctx.putImageData(...)` | `ctx.putImageData(...)`（待验证 V1） |
+| `canvas.toBlob(cb,'image/png')` | `image.createImagePacker().packing(pixelMap, 'image/png')` → `ArrayBuffer` |
+| `createImageBitmap(blob)` | `image.createImageSource(buf).createPixelMap()` |
+| `<video>` + 逐帧绘制 | 引擎 `decodeFrame(path, t)` → `PixelMap`（§5.5） |
+
+### 4.7 系统能力接线
+
+| 能力 | 实现 | 备注 |
+|---|---|---|
+| 打开文件 | `picker.DocumentViewPicker` + `filePicker.select()` | 得到 URI，需 `fs.open(uri)` 转 fd 交给引擎 |
+| 保存文件 | `picker.DocumentSavePicker` | 同上 |
+| 拖拽导入 | ArkUI `onDrop` + `drag` 框架 | 需验证 PC 外部拖入（V6） |
+| 在文件夹中显示 | `Want` + `fileManager` | 需实测（V9） |
+| 偏好设置 | `@ohos.data.preferences` | 目前仅 Settings 页，无实际配置项 |
+| 日志 | `hilog`（`0x3200` / `MediaStudio`） | 替代 `%TEMP%\media-studio.log` |
+| 窗口 | `windowStage` + 自定义标题栏 | PC 端最小化/最大化/置顶 |
+| 快捷键 | ArkUI 键盘事件（Ctrl+S / Esc） | PC 端建议至少支持 |
+
+### 4.8 目标工程目录
+
+```
+media-studio/
+├── electron-app/          ← 保持不动（Windows 版继续维护）
+├── sdk/                   ← 共享 C++ 源码
+│   ├── src/core|ffmpeg|gif_keying|video_to_gif/   （原样保留）
+│   └── src/engine/        ← 新增：OHOS 引擎旁路（v1.2 已落地）
+│       ├── ms_inproc_exec.{h,cpp}   进程内执行器（等价一次 ffmpeg CLI 调用）
+│       └── ms_pipeline.{h,cpp}      C1 四段流水线 + probe
+├── tools/
+│   ├── fetch-ffmpeg.mjs   （Windows 专用，不动）
+│   ├── ohos-env.sh            ← 新增：OHOS 构建公共环境变量
+│   ├── gen-ohos-toolchain.sh  ← 新增：生成 clang/lld 交叉工具链包装
+│   ├── build-ffmpeg-ohos.sh   ← 新增：OHOS ffmpeg 交叉编译脚本
+│   ├── stage-ffmpeg-ohos.sh   ← 新增：把 .so 与头文件装配进 harmony-app
+│   └── compare-gif.sh         ← 新增：两端 GIF 解码后逐字节对拍
+└── harmony-app/           ← 新增：DevEco 工程（与 electron-app 平级）
+    ├── AppScope/app.json5           （bundleName: xyz.demonshir.mediastudio.hm）
+    ├── build-profile.json5          （**不含签名配置**：正式上架需自备 profile）
+    ├── entry/
+    │   ├── src/main/
+    │   │   ├── cpp/
+    │   │   │   ├── CMakeLists.txt    （引用 ../../../../../sdk/src/engine/*.cpp）
+    │   │   │   ├── napi_init.cpp
+    │   │   │   ├── pipeline_probe.cpp  P8/P9 端到端探针
+    │   │   │   └── verify_common.h
+    │   │   ├── ets/
+    │   │   │   ├── pages/Index.ets   ← 探针页（后续扩为 7 个页面）
+    │   │   │   └── entryability/
+    │   │   └── resources/rawfile/    ← 内置样例（test.mp4 / test_rot90.mp4）
+    │   └── libs/<arch>/               ← stage 脚本装配进来的 ffmpeg .so
+    └── oh-package.json5
+```
+
+> 命名遵循现有工程惯例（`jieya-harmony` 用 `xyz.demonshir.zipmaster.hm`），鸿蒙版用 `xyz.demonshir.mediastudio.hm`。
+> `sdk/` 作为共享源码目录：鸿蒙工程在 `CMakeLists.txt` 里用**相对路径直接编译** `../../../../../sdk/src/engine/*.cpp`，不复制代码，避免双份维护（复制会漂移）。
+> **签名不入库**：`build-profile.json5` 刻意不含 `signingConfigs`，验证包用 unsigned HAP 安装即可；正式上架需自备与 bundleName 绑定的 profile/证书。
+
+---
+
+## 5. 关键技术难点与解法
+
+### 5.1 难点一：进程模型改造
+
+**问题**：Windows 版把 ffmpeg 当外部进程；鸿蒙不能。
+
+**解法（两段式）**：
+1. **一期**：进程内 `napi_async_work` 执行（§4.2），沿用 jieya-harmony 的「同步接口直跑 + 耗时接口异步 + 进度 threadsafe 回抛 + 全局任务表 cancel」模式。
+2. **预留隔离口**：`engine_iface.h` 抽象出 `run(args, progress)`；若后续需要崩溃隔离，切到 `OH_Ability_StartNativeChildProcess` 加载同一 `.so`，用 fd 管道跑 JSON-lines —— 协议与现状 `ms_demo` 一致，引擎侧零改动。
+
+**代价与收益**：牺牲了「ffmpeg 崩溃不带崩主进程」的隔离性。换来的是实现简单、无设备限制、取消语义直接可用。实测若 ffmpeg 对损坏输入只返回错误码而不崩溃（通常如此），风险可接受。
+
+### 5.2 难点二：ffmpeg 交叉编译
+
+**问题**：musl 而非 glibc、LLVM/LLD 工具链、配置项繁杂、体积与许可。
+
+**解法**：
+- 直接复用 `jieya-harmony/entry/src/main/cpp/third_party/CMakeLists.txt` 的第三方库组织方式（该工程已成功交叉编译 zlib/libarchive/7zip/zstd）。
+- 提供 `tools/build-ffmpeg-ohos.sh`，参照官方 `ohos_config.sh` 与社区已验证的 FFmpeg 8.1 → 鸿蒙 PC 脚本。
+- 先做最小构建（仅 GIF 编码 + H.264 解码）跑通，再逐步加解码器，避免一次性调试巨型配置。
+
+### 5.3 难点三：许可合规与编码器替换 ⚠️
+
+**现状**：实测 `resources/sdk/ffmpeg.exe` 为 **GPL 构建**（`--enable-gpl`，含 libx264/libx265）。
+
+**鸿蒙版的许可决策**
+
+| 方案 | 后果 | 建议 |
+|---|---|---|
+| 继续 GPL | 整个 App 须以 GPL 分发并公开完整源码；商用闭源分发受阻 | ❌ |
+| **LGPL + libopenh264** | ffmpeg 动态链接（可重链接）+ OpenH264(BSD) 替代 x264(GPL) | ✅ **推荐** |
+
+**具体变更点**
+
+| 现状 | 鸿蒙版 | 影响 |
+|---|---|---|
+| `-c:v libx264 -crf N -preset medium` | `-c:v libopenh264 -b:v <码率>` 或 `-rc_mode quality` | **产品可见**：CRF（质量恒定）与码率（体积恒定）语义不同，需在 UI 上调整参数含义（改为「质量档位」映射到码率） |
+| `--enable-gpl` | `--disable-gpl --disable-nonfree --enable-version3` | 体积与合规双赢 |
+| 其余滤镜（geq / alphaextract / alphamerge / palettegen / paletteuse / split / trim / setpts / reverse / concat / fps / scale / crop / pad / format / ffv1） | 全部 LGPL 干净，**无需改动** | ✅ 核心算法保真 |
+
+> 已验证：当前 Windows 构建中 `libopenh264` 编码器存在（`ffmpeg -encoders` 可见），说明该替换路径在本机已有先例。
+
+**其它合规项**：
+- LGPL 要求：动态链接 `libav*.so` 时，需允许用户替换该库（提供替换路径或说明）；或静态链接 + 提供完整对应源码。
+- 应用上架时需在「开源软件声明」中列出 ffmpeg、OpenH264 及其版本与许可。
+
+### 5.4 难点四：进度上报与取消
+
+**现状**：Windows 版解析 ffmpeg 的 `-progress pipe:1`（`out_time_us=`）与 stderr 的 `[NN%]`。
+
+**鸿蒙版**：引擎内部直接按已处理帧数/总帧数计算百分比，**不再需要文本解析** —— 这反而比现状更准（现状的 CLI 模式靠正则匹配 stderr，属于脆弱路径）。
+取消：任务表记录 `AVFormatContext` 与取消标志，解码循环每帧检查并 `av_read_frame` 返回 `AVERROR_EXIT`。
+
+### 5.5 难点五：WYSIWYG 预览（VideoCrop）
+
+**问题**：现有预览 = `<video>` 逐帧画进 canvas。ArkUI `Video` 组件无法绘制进 Canvas（R3）。
+
+**两个候选**：
+
+| 方案 | 做法 | 优点 | 缺点 |
+|---|---|---|---|
+| **A：引擎解码帧**（推荐） | NAPI 暴露 `decodeFrame(path, t)` → 返回 `PixelMap`，ArkUI Canvas 绘制该帧 | 与导出用的解码器**完全一致**，真正 WYSIWYG；旋转语义统一 | 需实现单帧解码（含 seek）；预览帧率受解码速度限制（可缓存若干关键帧） |
+| B：Video 组件叠加 | `Video` 组件 + `scale/translate` 摆位 + Canvas 画裁剪框与遮罩 | 实现快，无需引擎改动 | 缩放/位移与导出链路的像素对齐需人工保证；letterbox 处理易出偏差 |
+
+**推荐 A**，与 §4.4.3 的旋转语义问题一并解决。
+
+### 5.6 难点六：PNG 无 alpha 输出
+
+**v1.1 实测修正**：v1.0 假设「用 `@ohos.zlib` 替代 `CompressionStream('deflate')`」——**这个假设是错的**。
+
+实测查证 `@ohos.zlib`（SDK `ets/api/@ohos.zlib.d.ts`）的完整 API 面：
+
+| API | 形态 | 能否产出 PNG 需要的 zlib 字节流 |
+|---|---|---|
+| `compressFile` / `compressFiles` / `decompressFile` | **文件** 级 | ❌ |
+| `zipFile` / `unzipFile` | 文件级 | ❌ |
+| `createGZipSync()` → `GZip` | **fd** 级（gzip 容器） | ❌（gzip ≠ zlib，且是 fd 级） |
+| `createChecksumSync()` → `Checksum` | Adler-32 校验和 | ❌（只是校验和） |
+| `createZipSync()` → `Zip` | zip 流 | ❌ |
+| **裸 buffer 的 `compress2` 等价接口** | — | **不存在** |
+
+**结论：`@ohos.zlib` 没有内存级 zlib 压缩接口**，且 GZip 是 gzip 容器（RFC1952），与 PNG IDAT 需要的 zlib（RFC1950）不兼容。
+
+**解法（已实测验证）**：**把 deflate 下沉到原生层**。
+
+- OHOS NDK 自带 `libz.so`（已实测可用），其 `compress2()` 输出的正是 **zlib 格式**：
+  - 实测 `compress2()` 结果头字节 = `78 9C`（zlib magic + deflate 最佳压缩）✅
+  - 这与浏览器 `CompressionStream('deflate')` 的输出格式**完全一致**（Web Compression API 的 `'deflate'` 就是 zlib 格式，`'deflate-raw'` 才是裸流）
+- 因此 `pngrgb.ts`（84 行）**几乎逐行保留**，只需把：
+  ```ts
+  const cs = new CompressionStream('deflate');   // 浏览器
+  ```
+  换成：
+  ```ts
+  const packed = msverify.zlibDeflate(rawBytes); // NAPI → 原生 compress2()
+  ```
+- 顺带收益：PNG 编码器本来就属于「引擎」职责，和 ffmpeg 在同一个 `.so` 里，ArkTS 侧只拿字节。
+
+**附带影响**：`pngrgb.ts` 的 CRC32 实现可以一并下沉（原生 `crc32()`），或保留纯 ArkTS（84 行、可读性好、不是性能瓶颈）。
+
+### 5.7 难点七：拖拽导入
+
+ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 上从文件管理器拖入文件到应用窗口的行为（V6）。若不稳定，降级为「点击选择文件」主路径 + 拖拽作为增强。
+
+### 5.8 难点八：中文路径与 URI 授权
+
+- Windows 版已用 `CreateProcessW` + CP_ACP 处理中文路径（`executor.cpp`）。
+- 鸿蒙侧：引擎在 C++ 内用 `fopen`/POSIX 路径直接访问沙箱文件（**不经 URI**），需要把 `picker` 返回的 URI 通过 `fs.open(uri)` 转成 **fd**，再 `dup` 给引擎使用，避免中文路径编码问题。ArkTS 侧传 fd（number）而非路径字符串。
+- **注意**：`picker` 返回的是 `file://` / `datashare://` URI，不保证可直接被 C++ `fopen` 打开；fd 传递是更稳的通道。
+
+### 5.9 难点九：应用体积与上架
+
+- HAP 含 `lib/arm64-v8a/*.so`（ffmpeg 全量会很大）→ 必须按 §4.5 裁剪。
+- 同时提供 x86_64（模拟器调试）会再翻倍体积 → 调试包全架构，release 包仅 arm64-v8a。
+- 需确认 AGC 上传的包体上限（V7）。
+
+---
+
+## 6. 里程碑与工时
+
+> **v1.1 更新**：M0 的核心假设已在本机验证通过（§10），R-01/R-02/R-04/R-06 均已解除。M0 剩余工作只有「aarch64 真机复跑」与「把探针固化为回归用例」。
+
+| 阶段 | 内容 | 产出 | 估算 | **v1.1 状态** |
+|---|---|---|---|---|
+| **M0 可行性验证** | 最小鸿蒙工程；ffmpeg OHOS 最小构建；NAPI 冒烟转 GIF | `libmedia_studio.so`、`build-ffmpeg-ohos.sh`、冒烟 Demo | 2–3 人日 | 🟡 **已完成 80%**：ffmpeg 交叉编译 ✅、NAPI ✅、子进程 ✅、Canvas ✅、zlib ✅；**待补 aarch64 真机复跑 + 真 GIF 编码端到端** |
+| **M1 引擎移植** | 进程内 CLI 子集执行器 + 探针 + 单帧解码 + 任务表/取消 | C1/C2/C3/C4 全部可用 | 9–12 人日 | ⬜ 未开始 |
+| **M2 UI 重写** | 7 页面 + 4 lib 翻译 + Canvas 封装 + 拖拽 | 功能对齐 Windows 版 | 15–20 人日 | ⬜ 未开始 |
+| **M3 打磨与上架** | 进度/取消、错误提示、体积裁剪、签名、上架材料 | 可发布 HAP | 5–8 人日 | ⬜ 未开始 |
+| （可选）M1.5 ArkWeb 过渡版 | ArkWeb 壳 + Bridge | 快速可用版本 | 8–12 人日 | ⬜ 视需要 |
+
+**合计（不含 M1.5）：35–48 人日**（M0 已完成约 2 人日）
+
+**关键路径**：M0 → M1。M1 的成败取决于「进程内 CLI 子集执行器」能否用 `avfilter_graph_parse_ptr` 忠实复刻现有滤镜字符串 —— 这是**最高风险点（R-03：自动旋转语义）**，建议 M1 开工即用竖拍样例建立黄金用例。
+
+**并行建议**：
+- M1 进行中，M2 的 `lib/` 纯算法翻译（`cropMath`/`mono1bpp`/`pngrgb`/`appicons`，共 705 行）可同步开工 —— 不依赖引擎。
+- `pngrgb.ts` 的翻译需等 M1 的 `zlibDeflate` NAPI 接口就绪（接口契约已在 §5.6 定型，可先行 mock）。
+- 验证脚手架 `tmp/harmony-verify/` 可直接改造为 **M1 的回归测试底座**（原生探针 + ArkTS 页面 + 双架构构建脚本都已跑通）。
+
+---
+
+## 7. 风险登记册
+
+| ID | 风险 | 影响 | 概率 | 缓解 | **v1.1 状态** |
+|---|---|---|---|---|---|
+| R-01 | ffmpeg OHOS 交叉编译受阻（musl/LLD/配置） | 阻断 | ~~中~~ | ~~M0 优先验证~~ | ✅ **已解除**：本机实测 x86_64 + aarch64 **双架构**交叉编译成功（LGPL，所需滤镜集齐全），产物 9.5 / 6.1 MB，并在设备上实跑通过；4 个踩坑已固化进脚本 |
+| R-02 | 进程模型落地受阻（NativeChildProcess 设备限制） | 高 | ~~中~~ | ~~一期用进程内 async_work~~ | ✅ **已解除**：2in1 实测 `rc=0`，子进程真实执行；一期进程内、二期子进程，两段式推进 |
+| R-03 | 自动旋转语义未复刻 → 裁剪结果与 Windows 不一致 | 高（静默错误） | ~~高~~ | ~~§4.4.3 陷阱 1 专项；用竖拍样例做黄金用例比对~~ | ✅ **已解除**（v1.2）：进程内执行器 1:1 复刻 `get_rotation()` 与 transpose/hflip/vflip/rotate 注入；带 90° display matrix 的竖拍样例在设备上输出 **480×640**（而非 480×360），与宿主 CLI 黄金件**像素 0 差异** |
+| R-04 | 许可误判（GPL 传染） | 高（法务） | ~~中~~ | ~~M0 即锁定 LGPL 配置~~ | ✅ **已解除**：实测 `LGPL version 3 or later`；CI 检查 `--enable-gpl` 仍建议保留 |
+| R-05 | libopenh264 质量/参数语义与 libx264 不一致 | 中 | 中 | 参数从 CRF 改码率，做主观画质 A/B；必要时保留 x264 作为独立 GPL 可选包 | ⬜ 开放（需交叉编译 OpenH264） |
+| R-06 | ArkUI Canvas 像素读写 API 能力不足 | 中 | ~~中~~ | ~~V1 提前验证~~ | ✅ **已解除**：实测 `getImageData`/`putImageData` 完全正确 |
+| R-07 | 用户切后台时任务被冻结/回收 | 中 | 中 | 申请长时任务（`KEEP_BACKGROUND_RUNNING`）；或明确产品行为为「切走即中断」 | ⬜ 开放 |
+| R-08 | 拖拽在 PC 上不可用 | 低 | 中 | 降级为点击选择；V6 验证 | ⬜ 开放 |
+| R-09 | x86_64/arm64 双架构维护成本 | 低 | 高 | release 仅 arm64；CI 统一构建脚本 | ⬜ 开放（模拟器必须 x86_64） |
+| R-10 | ArkTS 静态类型约束导致 UI 重写量超预期 | 中 | 中 | 先做 Crop（最复杂）页面做样本，校正估算 | ⬜ 开放 |
+| R-11 | `sdk/` 双端共享导致 Windows 版回归 | 中 | 中 | 鸿蒙改动全部新增在 `sdk/src/engine/`，不触碰 Windows 路径；CI 跑 Windows 冒烟 | ⬜ 开放 |
+| **R-12** | **PNG 编码依赖 `@ohos.zlib` 的假设被推翻** | 中 | — | 已改为原生 `compress2()`（实测 `78 9C`），`pngrgb.ts` 保留，仅替换一处调用 | ✅ **已关闭**（v1.1 新增并解决） |
+| **R-13** | **未在 aarch64 真机上实跑**（仅 2in1 模拟器 x86_64） | 高 | — | aarch64 目标已交叉编译成功并校验 ELF（AArch64），但**未在真机安装运行**；M0.5 阶段复跑同一套探针 | ⬜ **新增，上架前必做** |
+| **R-14** | **aarch64 的 NEON 汇编在 Windows 宿主上不可用**（`--disable-asm` 构建） | 中 | 中 | 生产构建改用 Linux 宿主（WSL + Linux 版 OHOS NDK），ARM `.S` 路径正常且 NEON 可用 | ⬜ **新增，M0.5 处理** |
+| **R-15** | **精简构建漏配组件导致静默降级**（`--disable-everything` 下漏配 `--enable-parser=gif`，GIF 帧无法切分，帧数统计为 0 且**不报任何错**） | 中 | — | 构建后逐项核对 `config_components.h` 关键组件；`ms_pipeline` 的帧数统计改为「解码计数为 0 时保留容器值」 | ✅ **新增并已解决**（v1.2） |
+
+---
+
+## 8. 验收标准
+
+**功能对齐（逐项与 Windows 版比对）**
+
+| 能力 | 验收标准 |
+|---|---|
+| C1 视频→GIF | 输出 GIF 帧数、尺寸、透明度正确；ping-pong 方向正确；调色板色差目视一致 |
+| C2 抠像 | 5 种算法输出与 Windows 版**逐帧像素级**一致（黄金文件比对，容差 0） |
+| C3 视频裁剪 | 输出分辨率/画面构图一致；**旋转 90° 的竖拍样例必须一致** |
+| C4 探针 | width/height/fps/duration/codec/size 与 ffprobe 一致 |
+| C5 图像裁剪 | 输出像素与 Windows 版一致（黄金文件比对） |
+| C6 图标生成 | 各平台规格文件齐全；PNG 无 alpha（iOS 商店要求） |
+| C7 单色化 | BMP 结构正确；C 数组/二进制格式与 Img2Lcd 兼容 |
+| C9 文件 | 选择/保存/定位在 PC 上行为正确，中文路径正常 |
+| C10 交互 | 拖拽导入、进度实时更新、取消可用 |
+
+**工程标准**
+- HAP 体积 ≤ 60 MB（release，arm64-v8a 单架构）—— **实测含 ffmpeg 的 HAP 为 19.08 MiB（20,008,188 字节），余量充足** ✅
+- 3 分钟 1080p 视频转 GIF ≤ 90 秒（对齐 Windows 版基准，需实测标定）
+- 无 ArkTS 编译告警；引擎层无内存泄漏（ASan 验证）
+- `hilog` 可完整回溯一次转换任务
+
+**回归测试基线（可直接由验证工程改造而来）**
+
+| 用例 | 断言 | 来源 |
+|---|---|---|
+| NAPI 桥接 | `ping()` 返回 `pong-from-native` | P1 |
+| 运行时 | musl；`pageSize=4096` | P2 |
+| zlib 格式 | 输出头字节 `78 9C`（zlib/RFC1950） | P3 |
+| **滤镜链解析** | `mask_builder` 的 filter_complex 解析出 **12 个滤镜** | P6 |
+| **alpha 求值** | 背景色 → `0`；前景色 → `255` | P6 |
+| **GIF 编码** | 输出文件头 `GIF89a`，`packets ≥ 1` | P7 |
+| 原生子进程 | `rc=0`，子进程写回标记文件 | P4 |
+| Canvas 像素 | `fillRect→getImageData` 读回 `rgba(255,0,0,255)`；`putImageData→getImageData` 读回 `rgba(0,0,255,255)` | P5 |
+
+---
+
+## 9. 待验证事项（V 清单）
+
+**v1.1 状态**：V1/V3/V4/V5/V7/V8 与新增的 V11/V12 已在本机实测闭环（见 §10），其余仍开放。
+
+| ID | 待验证 | 方法 | 影响 | **状态** |
+|---|---|---|---|---|
+| V1 | ArkUI `CanvasRenderingContext2D` 的 `getImageData`/`putImageData` | 运行时探针 | 决定 C5/C6/C7 实现路径 | ✅ **通过**（§10.3 P5） |
+| V2 | ArkUI `Video` 组件 API 与 PC 行为 | 最小 Demo | 影响预览方案选型 | ⬜ 开放（可由 `decodeFrame` 方案绕开） |
+| V3 | `OH_Ability_StartNativeChildProcess` 对三方应用是否开放 | 真机/模拟器调用 | 决定能否保留子进程架构 | ✅ **通过**（§10.3 P4） |
+| V4 | zlib 字节流的获取途径 | SDK API 核查 + 运行时探针 | 决定 PNG 编码器实现位置 | ✅ **通过，但结论修正**（§10.3 P3 / §5.6） |
+| V5 | `picker.DocumentViewPicker` 扩展名过滤与多选 | SDK API 核查 | 影响 C9 体验 | ✅ API 存在（`fileSuffixFilters`/`maxSelectNumber`），交互待实测 |
+| V6 | ArkUI 拖拽能否接收 PC 文件管理器拖入 | 真机测试 | 决定 C10 是否降级 | ⬜ 开放 |
+| V7 | AGC 上传的 HAP 包体上限与签名要求 | 查开发者文档 | 决定体积裁剪目标 | 🟡 **部分闭环**：实测 HAP 含 ffmpeg 后 **18.88 MB**，体积无压力；签名 profile 与 bundleName 强绑定 |
+| V8 | ffmpeg 在 OHOS 上的 musl 适配 | 交叉编译实测 | 决定 R-01 是否解除 | ✅ **通过**（§10.4，双架构 + 设备实测） |
+| V9 | 「在文件夹中显示」在 PC 上的实现方式 | 真机测试 | 影响 C9 | ⬜ 开放 |
+| V10 | 鸿蒙沙箱内多线程 ffmpeg 的 CPU 配额行为 | 真机压测 | 影响性能验收线 | ⬜ 开放 |
+| **V11** | **滤镜字符串能否在鸿蒙上原样执行** | 设备端 `avfilter_graph_parse_ptr` + `geq` 求值 | 决定引擎改造工作量 | ✅ **通过**（§10.3 P6：12 个滤镜解析成功，alpha 求值正确） |
+| **V12** | **设备端能否真实编码 GIF** | 设备端 libavcodec/libavformat 编码 | 决定整条流水线可行性 | ✅ **通过**（§10.3 P7：`GIF89a` 1053 字节） |
+
+---
+
+## 10. 验证报告（v1.1 实测 + v1.2 M1 实测）
+
+> 本章记录 2026-11-18 在本机完成的**可复现**验证。所有结论均来自实际执行输出，非推断。
+
+### 10.1 验证环境
+
+| 项 | 值 | 来源 |
+|---|---|---|
+| SDK | **HarmonyOS 26.0.0 (API 26)** | `sdk/default/sdk-pkg.json` |
+| NDK | clang **15.0.4**（OHOS LLVM），musl sysroot | `native/llvm/bin/clang.exe --version` |
+| 目标三元组 | `aarch64-unknown-linux-ohos` / `x86_64-unknown-linux-ohos` | `native/llvm/bin/` |
+| 2in1 模拟器 | 实例 **MateBook Pro**，`HarmonyOS 7.0.0 (26.0.0)`，`x86_64`，3120×2080，density 304 | `param get const.product.devicetype` → **`2in1`** |
+| 连接方式 | `hdc tconn 127.0.0.1:5555`（模拟器 TCP 端口需手动 tconn，不会自动发现） | 实测 |
+| 宿主工具 | Git Bash（sh/sed/awk/perl）+ mingw32-make 4.4.1 + DevEco JBR 25 | 实测 |
+
+**踩坑记录（宿主环境）**
+1. `hdc list targets` 只列出 `COM3/COM4 UART`，**不会自动发现模拟器**；模拟器的 hdc 端口是 `5555`，必须 `hdc tconn 127.0.0.1:5555`。
+2. 模拟器进程随前台命令结束被杀 → 必须用 WMI `Win32_Process::Create` 脱离启动。
+3. `hdc snapshot_display` 只接受 `.jpeg` 后缀。
+4. hvigor 打包/签名需要 **Java**，本机 Java 不在 PATH → `spawn java ENOENT`。解法：把 DevEco 自带 JBR 加进 PATH（`D:\ProgramFiles\DevEco Studio\jbr`）。
+5. 签名 profile 与 **bundleName 强绑定**（`00303074 Configuration Error`）。验证包用 **unsigned HAP** 即可安装到模拟器，无需签名。
+6. `Get-ChildItem -Filter 'Makefile'` 在本机会漏报文件（`-Filter` 与路径组合的坑），改用 `Get-ChildItem -File | Where-Object` 复核。
+
+### 10.2 验证载体
+
+在 `tmp/harmony-verify/` 建立了一个最小鸿蒙工程（**未提交，git 未跟踪**）：
+
+```
+harmony-verify/
+├── build-profile.json5          复用 jieya-harmony 的签名配置
+├── entry/
+│   ├── libs/x86_64/             交叉编译产出的 6 个 ffmpeg .so（+ .so.NN）
+│   └── src/main/
+│       ├── cpp/napi_init.cpp    原生探针（NAPI + zlib + NativeChildProcess）
+│       ├── cpp/ffmpeg_probe.cpp ffmpeg 探针（滤镜链求值 + 真实 GIF 编码）
+│       ├── cpp/verify_common.h  共享辅助
+│       ├── cpp/CMakeLists.txt   链 libace_napi / libhilog_ndk / libz / libchild_process + ffmpeg
+│       ├── cpp/types/libmsverify/  NAPI 类型声明（.d.ts）
+│       └── ets/pages/Index.ets  ArkUI 页面，跑探针 + Canvas 像素测试
+├── build_ffmpeg_ohos.sh        ffmpeg 交叉编译脚本（含 MSYS 路径修正）
+├── gen_toolchain.sh            生成 <arch>-linux-ohos-* 工具链封装
+└── stage_ffmpeg.sh             装配头文件与 .so 到工程
+```
+
+工程用 `hvigorw --mode module -p product=default -p module=entry@default -p buildMode=debug assembleHap` 构建，产出 `entry-default-unsigned.hap`（**18.88 MB**，含 x86_64 与 arm64-v8a 的 `libmsverify.so` 及 ffmpeg `.so`）。
+
+> 验证工程可以**直接改造为 M1 的回归测试底座**：原生探针、ArkTS 页面、双架构构建脚本、双架构 ffmpeg 构建链路都已跑通。
+
+### 10.3 运行时探针结果（2in1 模拟器实测）
+
+应用以**真实桌面窗口**运行（截图见下），探针全部通过。hilog 原始输出：
+
+```
+I A03200/MsVerify: P1 napi.ping      = pong-from-native
+I A03200/MsVerify: P2 sysInfo        = Linux 5.10.210 x86_64 pageSize=4096
+I A03200/MsVerify: P3 zlibProbe      = rc=0 len=48 head=[78 9C CB 4D] zlibVer=49.46
+I A03200/MsVerify: P3 zlibDeflate    = len=75 head=78 da 63 60 zlibMagic=YES
+I A03200/MsVerify: P6 avfilterProbe  = parse=OK(filters=12) alpha(bg)=0 alpha(fg)=255 fmt=gbrap verdict=PASS
+I A03200/MsVerify: P7 gifEncodeProbe = gif_encode: packets=2 bytes=1053 magic=GIF89a verdict=PASS
+I A03200/MsVerify: P4 childProcess   = rc=0 pid=11009
+I A03200/MsVerify: P5 getImageData   = rgba(255,0,0,255)
+I A03200/MsVerify: P5 putImageData   = rgba(0,0,255,255)
+I A03200/MsVerify: P5 canvas verdict = PASS
+I A03200/MsVerify: ChildMain entered, entryParams=<private>        ← 子进程真的跑起来了
+I A03200/MsVerify: ChildMain wrote marker file <private>
+I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
+```
+
+> **可复现性**：同一天二次重跑（`aa force-stop` → `aa start` → 重新采集 hilog）得到**逐条一致**的结果，仅子进程 pid 随运行变化（31240 → 11009）。说明探针无状态残留、无偶发失败。
+>
+> **许可复核**（二次重跑时对两套构建产物的 `config.h` / `ffbuild/config.mak` 直接校验）：`CONFIG_GPL 0`、`CONFIG_NONFREE 0`、`CONFIG_VERSION3 1`、`CONFIG_LGPLV3 1` —— 双架构均为纯 LGPL v3，无 GPL 传染。
+>
+> **架构复核**（直接读 ELF 头 `e_machine`）：x86_64 产物 = `0x3E`（x86-64），aarch64 产物 = `0xB7`（AArch64），均为 `magic=7f454c46`（ELF64）。
+
+| 探针 | 验证内容 | 结论 |
+|---|---|---|
+| **P1** | NAPI ↔ ArkTS 桥接 | ✅ ArkTS 可直接调用 `.so` 导出的函数；类型用 `types/*.so/index.d.ts` 声明 |
+| **P2** | 运行时 | ✅ **musl**（非 glibc）；页大小 4096 |
+| **P3** | 原生 zlib | ✅ `compress2()` 输出 **`78 9C`** = **zlib(RFC1950)**，与浏览器 `CompressionStream('deflate')` 同格式 → **PNG IDAT 可行** |
+| **P4** | 原生子进程 | ✅ `OH_Ability_StartNativeChildProcess("libmsverify.so:ChildMain", ...)` 返回 **rc=0**；子进程加载同一 `.so`、执行导出入口、写入标记文件，主进程读到内容 → **子进程架构在 2in1 上对三方应用完全可用** |
+| **P5** | Canvas 像素 | ✅ `fillRect` → `getImageData` 读到 `rgba(255,0,0,255)`；`putImageData` → `getImageData` 读到 `rgba(0,0,255,255)` → **Canvas 像素读写完全可用，C5/C6/C7 可按原方案实现** |
+| **P6** | **真实抠像滤镜链** | ✅ **`mask_builder.cpp` 生成的完整 `filter_complex` 字符串在设备上被 `avfilter_graph_parse_ptr` 成功解析（12 个滤镜）**；其 alpha 表达式在设备上求值正确：背景色 → alpha **0**（透明），前景色 → alpha **255**（不透明） |
+| **P7** | **真实 GIF 编码** | ✅ 用 OHOS 构建的 libavcodec/libavformat 在设备上**实际编码出 2 帧动画 GIF**，文件 1053 字节，头部为 **`GIF89a`** → **整条 decode/filter/encode 链在设备上可用** |
+
+> **P6 是本次验证最有价值的一条**：它直接证明了 §4.4.1 的核心主张 —— **`mask_builder.cpp` 的滤镜字符串可以一行不改地迁到鸿蒙**（用 `avfilter_graph_parse_ptr` 解析），引擎改造的工作量被压缩到「只替换执行器」。
+>
+> **P6 的附带发现**：`geq` 的输出像素格式是 **`gbrap`（planar）而非 `rgba`（packed）**，alpha 位于独立平面 `data[3]`。若沿用浏览器的 `data[0][3]` 读法会取到绿道值——这是一个**必须写进实现说明的坑**。
+
+![2in1 模拟器上的验证应用](harmonyos-pc-verify.jpeg)
+
+*2in1 模拟器桌面上的验证应用：窗口为真实桌面窗口，Canvas 左上角为 `fillRect` 的红色方块，中间为 `putImageData` 写入的蓝色像素点，下方为各探针输出（P1–P7 全部通过，与上方 hilog 逐条对应）。*
+
+### 10.4 ffmpeg 交叉编译实测（V8 / R-01）
+
+| 阶段 | 结果 |
+|---|---|
+| 源码获取 | `ffmpeg-7.1.1.tar.xz`（11.0 MB，ffmpeg.org 直连可用）。⚠️ Windows `tar` 无内置 xz、机器无 `xz.exe` → 用纯 WASM 的 `xz-decompress`（npm）解出 tar 再展开 |
+| 交叉编译 | **两个目标均构建成功**：`x86_64-linux-ohos` 与 `aarch64-linux-ohos`，OHOS NDK clang 15.0.4 + lld + musl sysroot |
+| `configure` | ✅ **成功**，输出 `License: LGPL version 3 or later`（许可合规目标达成） |
+| 滤镜集 | ✅ `geq` `alphaextract` `alphamerge` `palettegen` `paletteuse` `fps` `scale` `format` `split` `trim` `setpts` `reverse` `concat` `crop` `pad` `rotate` `transpose` **全部启用** |
+| 编解码 | ✅ h264/hevc/vp8/vp9/av1/mjpeg/png/gif 解码；gif/ffv1/png/mjpeg 编码 |
+| 产物体积 | x86_64 **9.5 MB** / aarch64 **6.1 MB**（6 个 `.so` 合计）——远优于 291 MB 的 Windows 版 |
+| ELF 校验 | ✅ aarch64: `ELF64 / DYN / AArch64`，SONAME `libavutil.so.59`；x86_64: `ELF64 / DYN / x86-64` |
+| 设备实测 | ✅ **.so 在 2in1 模拟器上成功加载运行**（P6/P7）——不只是编译通过 |
+| 构建踩坑 | 4 个（MSYS 路径 ×2、选项名 ×1、ARM 汇编 ×1），已记录于 §4.5.2 与下表 |
+
+**第四个坑 —— aarch64 的 ARM 汇编**：在 Windows 宿主上交叉编译到 aarch64 时，ffmpeg 会去找 `libswscale/aarch64/hscale.s`（小写）而源码是 `hscale.S`（大写），MSYS 路径规则不匹配导致中断。
+
+| 解法 | 代价 | 建议 |
+|---|---|---|
+| `--disable-asm` | ARM NEON 汇编关闭，软解性能下降 | ✅ **本次采用**，验证链路完整；**仅作验证/兜底** |
+| 换 Linux 宿主（WSL + Linux 版 OHOS NDK） | 需要 Linux NDK（约 1 GB） | ✅ **生产推荐**：Linux 宿主上 ffmpeg 的 ARM `.S` 路径正常，NEON 可用 |
+| 提供 ARM 汇编器 | 依赖多 | 不推荐 |
+
+> **结论**：R-01 解除。ffmpeg 可以在本机 OHOS 工具链上交叉编译为 LGPL 的 `.so`，且**只开 Media Studio 需要的最小滤镜集**即可满足全部三条流水线需求；产出的 `.so` 已在 2in1 设备上完成真实滤镜求值与真实 GIF 编码。
+
+### 10.5 实测踩坑速查（可直接抄进实现文档）
+
+| # | 现象 | 根因 | 处置 |
+|---|---|---|---|
+| 1 | `hdc list targets` 看不到模拟器 | 模拟器走 TCP，不会自动枚举 | `hdc tconn 127.0.0.1:5555` |
+| 2 | 模拟器随前台命令被杀 | 子进程随 job object 退出 | 用 WMI `Win32_Process::Create` 脱离启动 |
+| 3 | `snapshot_display` 报错 | 只接受 `.jpeg` 后缀 | 改用 `.jpeg` |
+| 4 | hvigor 打包失败 `spawn java ENOENT` | Java 不在 PATH | 把 DevEco JBR（`D:\ProgramFiles\DevEco Studio\jbr`）加进 PATH |
+| 5 | 签名失败 `00303074` | 签名 profile 与 bundleName 强绑定 | 验证包用 **unsigned HAP** 安装即可；正式包需自备 profile |
+| 6 | ffmpeg `make` 找不到 `/d/.../Makefile` | configure 生成的路径是 MSYS 风格 | configure 后 `sed` 改写 stub Makefile 的 include 行为 Windows 路径 |
+| 7 | `Makefile:42: /d/.../tools/Makefile: No such file` | `config.mak` 的 `SRC_PATH` 同为 MSYS 路径 | `sed` 改写 `SRC_PATH`/`SRC_LINK` 为 Windows 路径（一处修复全部生效） |
+| 8 | `Unknown option "--disable-drm"` | ffmpeg 7.1 的选项名 | `--disable-libdrm` |
+| 9 | aarch64 缺 `hscale.s` | ARM 汇编 `.S`/`.s` 大小写在 MSYS 下不匹配 | `--disable-asm` 或换 Linux 宿主 |
+| 10 | `geq` 的 alpha 读成绿道值 | `geq` 输出 planar `gbrap`，alpha 在 `data[3]` | 用 `av_pix_fmt_desc_get()` 判断 planar 后取 alpha 平面 |
+| 11 | `avfilter_graph_alloc_filter` 签名不符 | FFmpeg 7.x 改为 `(graph, filter, name)` 三参 | 7.x 的 avfilter API 已重构（`avfilter_init_dict` 也改为传 `AVDictionary**`） |
+| 12 | 输出的 GIF **帧数统计为 0**，但整个转换**不报任何错** | 精简构建漏配 `--enable-parser=gif`：GIF 解复用器置 `need_parsing=AVSTREAM_PARSE_FULL_RAW`，没有 parser 时 `libavformat/demux.c:1411` 直接退化成吐原始块，解码器收到非关键帧块即报 `cannot decode frame without keyframe` | 构建脚本补 `--enable-parser=gif`；构建后核对 `config_components.h` 里 `CONFIG_GIF_PARSER 1` |
+| 13 | 帧数统计为 0 的**第二重原因**（修完 parser 仍可能踩） | 统计代码用解码计数**无条件覆盖**容器给的 `st->nb_frames`；而 GIF 解复用器 `gif_read_header` 扫描文件时其实已经数出了帧数（=24） | 解码计数为 0 时保留容器值，不用 0 覆盖 |
+| 14 | `hvigorw` 构建明明 `BUILD SUCCESSFUL` 却报退出码 1 | PowerShell 5.1 下 `$ErrorActionPreference='Stop'` 会把原生命令写到 **stderr** 的 WARN（`No signingConfig found`）升级成 `NativeCommandError` 终止 | 调原生命令前不要开 `Stop`，或把输出重定向后再判 `$LASTEXITCODE` |
+
+### 10.6 验证结论对设计的影响（变更清单）
+
+| 设计条目 | v1.0 | **v1.1 修订** |
+|---|---|---|
+| §2.3 R1 进程模型 | NativeChildProcess「部分可用」 | ✅ **确认可用**；子进程架构成为一等选项 |
+| §4.2 进程模型 | 只推荐进程内 async_work | **两段式**：一期进程内（最快），二期可零成本切子进程（协议不变） |
+| §4.4 滤镜字符串 | 「推测可用 `avfilter_graph_parse_ptr`」 | ✅ **实测证明可用**（12 个滤镜解析 + alpha 求值正确）；补入 FFmpeg 7.x API 差异与 `gbrap` planar 坑 |
+| §4.5 ffmpeg | 「参考社区流程，未验证」 | ✅ **本机实测通过**（x86_64 + aarch64 双架构，产物 9.5 / 6.1 MB），含精确 configure 参数与 4 个踩坑 |
+| §4.5 SDK 版本 | 假设 API 12/20 | **实测 API 26**（HarmonyOS 26.0.0），2in1 模拟器为 API 26 |
+| §5.3 许可 | 推测可锁 LGPL | ✅ **实测 `LGPL version 3 or later`** |
+| §5.6 PNG | 假设用 `@ohos.zlib` | ⚠️ **修正**：`@ohos.zlib` 无裸 buffer 接口 → **deflate 下沉原生**（已验证 `78 9C`） |
+| §2.2 能力对照 | Canvas 像素读写「待验证」 | ✅ **确认可用**，C5/C6/C7 实现路径不变 |
+| §5.5 预览方案 | 倾向引擎 `decodeFrame` | 维持推荐；V2 未验证，`decodeFrame` 可绕开 `Video` 组件限制 |
+| §9 V 清单 | 10 项全开放 | **7 项闭环**（V1/V3/V4/V5/V7/V8 + 新增 V11/V12），5 项仍开放 |
+| §7 风险表 | 11 项 | **14 项**：R-01/R-02/R-04/R-06 关闭；新增 R-12（PNG 假设，已解）、R-13（未上真机）、R-14（ARM 汇编宿主限制） |
+
+**v1.2 修订（M1 引擎移植）**
+
+| 设计条目 | v1.1 | **v1.2 修订** |
+|---|---|---|
+| §4.4 引擎内核 | 「只替换执行器」的**设计主张** | ✅ **实测落地**：`sdk/src/engine/ms_inproc_exec.{h,cpp}` + `ms_pipeline.{h,cpp}`，Windows 路径 `sdk/src/ffmpeg/executor.cpp` **一行未动** |
+| §4.4.3 陷阱 1 自动旋转 | 待专项验证（R-03 最高风险） | ✅ **已解除**：1:1 复刻 `fftools/cmdutils.c:get_rotation()` 与 `ffmpeg_filter.c:configure_input_video_filter()` 的滤镜注入；竖拍样例像素 0 差异 |
+| §4.4 滤镜格式协商 | 「靠 CLI 插入 `format` 滤镜」 | ✅ **已实现**：执行器在图输出与 buffersink 之间插 `format` 节点，编码器 `pix_fmt` 取 `av_buffersink_get_format()` 协商结果；**用户的滤镜字符串一行不改** |
+| §4.5 ffmpeg 组件集 | 滤镜集齐全 | **补 `--enable-parser=gif`**（否则 GIF 帧数统计静默为 0，见 §10.5 #12） |
+| §7 风险表 | 14 项 | **15 项**：R-03 关闭；新增 R-15（精简构建漏配组件→静默降级，已解） |
+| §10 验证报告 | 仅 P1–P7 探针 | **新增 P8/P9 端到端探针**：C1 流水线在设备上真实产出 GIF，并与 Windows 黄金件逐像素比对 |
+
+### 10.7 尚未闭环的项与建议动作
+
+| ID | 缺口 | 建议动作 | 阻塞什么 |
+|---|---|---|---|
+| V2 | `Video` 组件行为未知 | 用引擎 `decodeFrame` 方案（§5.5 A），可**绕开** V2 | VideoCrop 预览实现 |
+| V6 | 拖拽未知 | 先实现「点击选择」主路径，拖拽作为增强 | C10 体验 |
+| V7 | 包体上限 | 查 AGC 文档；按 §4.5 裁剪后预计 10–20 MB，风险低 | 上架 |
+| V9 | 文件定位 | 用 `Want` + 文件管理器实现，实测 | C9 体验 |
+| V10 | CPU 配额 | 真机压测 1080p/3min 转 GIF | 性能验收线 |
+| — | **aarch64 真机** | 本次仅在模拟器（x86_64）验证；真机需复跑 | 上架前必做 |
+
+### 10.8 M1 引擎移植端到端实测（v1.2 新增）
+
+**载体**：`harmony-app/`（DevEco 工程，bundleName `xyz.demonshir.mediastudio.hm`）；原生侧 `entry/src/main/cpp/pipeline_probe.cpp` 导出 `videoToGif(input, output, keepIntermediates?)`，ArkTS 侧 `Index.ets` 的 **P8 / P9** 探针调用。
+
+**引擎**：`sdk/src/engine/ms_inproc_exec.cpp`（进程内执行器，等价于一次 ffmpeg CLI 调用）+ `ms_pipeline.cpp`（C1 四段流水线）。**Windows 版 `sdk/src/ffmpeg/executor.cpp` 一行未改**，仍走 CLI。
+
+**样例**（都作为 rawfile 打进 HAP，规避沙箱不可写）：
+
+| rawfile | 说明 |
+|---|---|
+| `test.mp4` | 160×120 / 12 fps / 12 帧 / 无旋转 |
+| `test_rot90.mp4` | 同源，**带 90° display matrix**（`ffmpeg -display_rotation 90 -i test.mp4 -c copy` 生成），模拟竖拍手机视频 |
+
+**hilog 原始输出**（节选）：
+
+```
+I A03200/MsVerify: Format mov,mp4,m4a,3gp,3g2,mj2 probed with size=2048 and score=100
+I A03200/MsVerify: Format image2 probed with size=2048 and score=50
+I A03200/MsVerify: Format gif probed with size=2048 and score=100
+I A03200/MsVerify: probe count: streams=1 cidx=0 packets=25 counted=24
+I A03200/MsVerify: probe frames: .../out.gif -> 24 fps=12.000000
+I A03200/MsVerify: P8 videoToGif  = rc=0 frames=24 size=480x360 fps=12 bytes=483220
+I A03200/MsVerify: probe frames: .../out_rot90.gif -> 24 fps=12.000000
+I A03200/MsVerify: P9 videoToGif  = rc=0 frames=24 size=480x640 fps=12 bytes=694719
+```
+
+> `Format gif probed ... score=100` 证明 **gif 解复用器（100 分）胜出 image2（50 分）**——此前"image2 抢占 GIF 探测"的判断是错的，真正的原因是**缺 parser**（§10.5 #12）。
+
+**像素级对拍**（`tools/compare-gif.sh`：两端解码为 rawvideo rgb24 后逐字节比对，容差 0）
+
+| 用例 | 宿主黄金件 | 设备产物 | 容器统计比对 | 解码后 raw 比对 | 结论 |
+|---|---|---|---|---|---|
+| 普通 | `electron-app/_test/out.gif`（482,452 B） | 483,220 B | 480×360 / 24 帧 / `r_frame_rate=12/1` / `avg_frame_rate=25/2` / `duration=2.000000` —— **逐字段一致** | 12,441,600 B，**0 差异** | ✅ 像素一致 |
+| **旋转 90°** | `tmp/harmony-verify/rot/win_gold_rot90.gif`（693,951 B） | 694,719 B | **480×640** / 24 帧 / `12/1` / `25/2` / `2.000000` —— **逐字段一致** | 22,118,400 B，**0 差异** | ✅ 像素一致 |
+| 普通 · 中间 mkv | `winref/stage_a.mkv` | `out.gif.tmp.mkv` | — | 6,220,800 B，**0 差异** | ✅ 像素一致 |
+| 旋转 · 中间 mkv | `rot/g_a.mkv` | `out_rot90.gif.tmp.mkv` | — | 11,059,200 B，**0 差异** | ✅ 像素一致 |
+
+> **只差压缩流字节，不差像素**：四个用例的压缩字节数都略有差异（如普通 GIF 482,452 vs 483,220），原因是**两端 ffmpeg 版本不同**——宿主是 `N-126303-g9f35e220ff-20260827`（libavcodec 63.8.101），OHOS 侧固定在 **7.1.1**；编码器实现演进导致压缩流不同，但解码后画面**逐字节一致**。产品侧无感。
+
+#### R-03 自动旋转专项（v1.2 已解除）
+
+| 项 | 内容 |
+|---|---|
+| 风险 | CLI 会在用户滤镜链**之前**自动插入 `transpose`/`hflip`/`vflip`/`rotate`；进程内执行器若漏掉，竖拍视频会**静默**输出成横画面（不报错、最难发现） |
+| 复刻依据 | `fftools/cmdutils.c:get_rotation()` 的角度归一化 + `fftools/ffmpeg_filter.c:configure_input_video_filter()` 的 `IFILTER_FLAG_AUTOROTATE` 分支（滤镜插在 buffersrc 与用户链之间，注入后移除 display matrix side data） |
+| 数据通路 | mov 解复用器 → `st->codecpar->coded_side_data` → `avcodec_parameters_to_context` → `avctx->coded_side_data` → `ff_decode_frame_props` → **解码帧**的 `AV_FRAME_DATA_DISPLAYMATRIX` → 执行器读取并注入滤镜 |
+| 实测 | 输入 160×120 + 90° 矩阵 → 宿主 CLI 输出 **480×640**；设备输出 **480×640**；解码后 22,118,400 字节 **0 差异** → **R-03 关闭** |
+
+---
+
+## 附录 A：能力搬运映射表（逐文件）
+
+| 源文件 | 行数 | 去向 | 改造类型 |
+|---|---|---|---|
+| `sdk/include/media_studio.h` | 199 | `harmony-app/entry/src/main/cpp/engine/ms_api.h` | 复用（C ABI 保留） |
+| `sdk/src/core/task.{h,cpp}` | 59 | `engine/engine_task.{h,cpp}` | 复用 + 补取消语义 |
+| `sdk/src/ffmpeg/probe.{h,cpp}` | 129 | `engine/engine_probe.cpp` | **重写**（改用 libav* 替代 ffprobe） |
+| `sdk/src/ffmpeg/executor.{h,cpp}` | 372 | `engine/engine_cli_exec.cpp` | **重写**（spawn → 进程内） |
+| `sdk/src/gif_keying/mask_builder.{h,cpp}` | 181 | 复用（滤镜表达式生成） | **不改** ✅ |
+| `sdk/src/gif_keying/gif_keying.cpp` | 189 | 复用（流程编排，改调用新执行器） | 小改 |
+| `sdk/src/video_to_gif/video_to_gif.cpp` | 257 | 复用（同上） | 小改 |
+| `electron-app/src/main/videoCrop.ts` | 376 | `engine/engine_cli_exec.cpp`（滤镜链部分） | **重写**（TS → C++） |
+| `electron-app/src/main/main.ts` | 704 | — | **废弃**（能力由 NAPI + ArkUI 承担） |
+| `electron-app/src/preload/preload.ts` | 28 | — | **废弃** |
+| `electron-app/src/renderer/src/lib/*.ts` | 705 | `ets/common/*.ets` | **逐行翻译** ✅ |
+| `electron-app/src/renderer/src/pages/*.tsx` | 2343 | `ets/pages/*.ets` | 重写 |
+| `electron-app/src/renderer/src/components/*.tsx` | 76 | `ets/common/*.ets` | 重写 |
+| `electron-app/src/renderer/src/styles.css` | 692 | ArkUI 主题资源 | 重做 |
+
+**代码复用率估算**：C++ 引擎逻辑 **~75%** 保留（含全部滤镜算法），ArkTS 侧 **~30%** 可逐行翻译，UI 表现层 **0%**。按行数加权，整体复用率约 **35–40%**。
+
+## 附录 B：参考文献
+
+- HarmonyOS ChildProcess C API（`OH_Ability_StartNativeChildProcess`，仅 2in1/平板，API 13+）：<https://developer.huawei.com/consumer/en/doc/harmonyos-references-V14/native__child__process_8h-V14/>
+- ArkUI 窗口能力（PC/2in1，API 15+/20+）：<https://device.harmonyos.com/en/docs/apiref/harmonyos-references/capi-arkui-nativemodule-arkui-hostwindowinfo>
+- OpenHarmony third_party_ffmpeg（OHOS 适配，产物 `libohosffmpeg.so`）：<https://deepwiki.com/openharmony/third_party_ffmpeg/6.1-openharmony-(ohos)-integration>
+- 社区验证：FFmpeg 8.1 → 鸿蒙 PC 交叉编译指南 <https://blog.csdn.net/yyz_1987/article/details/156397055>
+- 社区验证：K-Lite 移植鸿蒙 PC（FFmpeg 7.1.1 + ArkUI，单 HAP，19 MB）：<https://blog.csdn.net/Mrxiao_bo/article/details/170634795>
+- ArkWeb 离线包（虚拟域名 + 拦截）：<https://harmonyosdev.csdn.net/6ac83b3dad85947e68ce9ded.html>
+- 官方 RTSP/FFmpeg 集成实践（鸿蒙侧）：<https://developer.huawei.com.cn/consumer/cn/blog/topic/03227618480603575>
+
+---
+
+## 变更记录
+
+| 版本 | 日期 | 变更 |
+|---|---|---|
+| v1.0 | 2026-11-18 | 初稿：现状盘点、能力对照、方案选型、目标架构、难点与解法、里程碑、风险、验收、V 清单 |
+| v1.1 | 2026-11-18 | **完成本机实测验证**（HarmonyOS 26.0.0 API 26 + 2in1 模拟器）：新增 §10 验证报告；V1/V3/V4/V5/V7/V8 闭环，新增 V11/V12；R-01/R-02/R-04/R-06 解除；新增 R-12/R-13/R-14；修正 SDK 版本（API 26）、PNG 编码方案（deflate 下沉原生）、进程模型（两段式）、FFmpeg 7.x avfilter API 差异、`geq` 输出为 planar `gbrap`；补入实测的双架构 ffmpeg configure 参数、产物体积与 11 条踩坑速查 |
+| v1.2 | 2026-11-18 | **完成 M1 引擎移植实测**：新增 `sdk/src/engine/`（进程内执行器 + C1 流水线，Windows 路径零改动）与 `harmony-app/` 正式工程；P8/P9 端到端探针在 2in1 上产出 GIF，与 Windows 黄金件**解码后逐字节 0 差异**（普通 12,441,600 B / 旋转 22,118,400 B）；**R-03 自动旋转解除**（竖拍样例 480×640 对齐）；**修复 `frames=0`**（根因：精简构建漏配 `--enable-parser=gif`，新增 R-15）；新增 §10.8；踩坑速查增至 14 条；新增 `tools/compare-gif.sh` |
