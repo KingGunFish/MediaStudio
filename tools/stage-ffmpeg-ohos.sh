@@ -1,0 +1,63 @@
+#!/bin/bash
+# Stage the cross-compiled FFmpeg into the HarmonyOS DevEco project:
+#   - headers    -> harmony-app/entry/src/main/cpp/third_party/ffmpeg/include
+#   - shared libs -> harmony-app/entry/libs/<abi>
+#
+# Both are build artefacts and are not tracked by git.
+#
+# Usage: tools/stage-ffmpeg-ohos.sh [x86_64|aarch64 ...]
+#        (no argument = every architecture that has a build directory)
+set -e
+
+# shellcheck source=tools/ohos-env.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ohos-env.sh"
+
+INC="$MS_HARMONY_APP/entry/src/main/cpp/third_party/ffmpeg/include"
+LIBS="$MS_HARMONY_APP/entry/libs"
+
+ARCHES=("$@")
+if [ ${#ARCHES[@]} -eq 0 ]; then
+  ARCHES=()
+  for d in "$MS_OHOS_WORK"/build-ohos-*; do
+    [ -d "$d" ] || continue
+    ARCHES+=("$(basename "$d" | sed 's/^build-ohos-//')")
+  done
+fi
+
+if [ ${#ARCHES[@]} -eq 0 ]; then
+  echo "no build directories found under $MS_OHOS_WORK" >&2
+  exit 1
+fi
+
+for ARCH in "${ARCHES[@]}"; do
+  BUILD="$MS_OHOS_WORK/build-ohos-$ARCH"
+  [ -d "$BUILD" ] || { echo "skip $ARCH (no build dir)"; continue; }
+
+  # Headers: the public API of every enabled component plus the generated
+  # config headers that the build produced.
+  rm -rf "$INC"
+  mkdir -p "$INC"
+  cp "$BUILD/config.h" "$INC/"
+  for L in libavutil libavcodec libavformat libavfilter libswscale libswresample; do
+    mkdir -p "$INC/$L"
+    cp "$FFMPEG_SRC_DIR/$L"/*.h "$INC/$L/"
+  done
+  cp "$BUILD/libavutil/avconfig.h" "$INC/libavutil/"
+  cp "$BUILD/libavutil/ffversion.h" "$INC/libavutil/"
+  echo "$ARCH headers: $(find "$INC" -name '*.h' | wc -l)"
+
+  # Shared libraries.
+  case "$ARCH" in
+    x86_64)  ABI=x86_64 ;;
+    aarch64) ABI=arm64-v8a ;;
+    *) echo "unknown arch mapping: $ARCH"; exit 1 ;;
+  esac
+  mkdir -p "$LIBS/$ABI"
+  for L in avutil avcodec avformat avfilter swscale swresample; do
+    if [ -f "$BUILD/lib$L/lib$L.so" ]; then
+      cp "$BUILD/lib$L/lib$L.so" "$LIBS/$ABI/"
+      cp "$BUILD/lib$L/lib$L.so."* "$LIBS/$ABI/" 2>/dev/null || true
+    fi
+  done
+  echo "$ABI libs:"; ls -lh "$LIBS/$ABI" | tail -n +2
+done
