@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.2（方案验证 + M1 引擎移植实测）
-> 日期：2026-11-18
+> 版本：v1.3（方案验证 + M1 引擎移植 + M2 抠像引擎移植实测）
+> 日期：2026-11-19
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1 引擎移植已跑通端到端，输出与 Windows 版逐像素一致（含自动旋转）**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）与 M2（C2 抠像）两条引擎流水线均已跑通端到端，输出与 Windows 版逐像素一致（含自动旋转）**，详见 §10 验证报告
 
 ---
 
@@ -50,6 +50,21 @@ M1 = 把 Windows 版的「spawn ffmpeg.exe」替换为「进程内 libav*」，�
 | M1-f | aarch64 真机 | 未上真机 | ⬜ 仍开放（R-13），上架前必做 |
 
 > **M1-c + M1-d 合起来的意义**：本移植最大的工作量假设（"引擎只需换执行器"）与最大的静默错误风险（自动旋转）**同时被证伪为"成立"**。至此，C1 功能在鸿蒙侧已达到「与 Windows 版可替换」的水准。
+
+### 0.3 v1.3 M2 抠像引擎移植实测结论速览
+
+M2 = 把 **C2 抠像（gif_keying）** 流水线也搬进进程内引擎：复用与 Windows 版**字节相同**的 `mask_builder.cpp` 滤镜串，走「掩膜链→ffv1 中间件 → palettegen 调色板 → paletteuse 出 GIF」三段。
+
+| # | 验证项 | v1.2 状态 | **v1.3 实测结论** |
+|---|---|---|---|
+| M2-a | C2 流水线端到端 | 未实现 | ✅ **通过**：设备产出 GIF（`rc=0 inFrames=24 frames=60 size=160x120`），容器统计与 Windows 黄金件**逐字段一致**（160×120 / 60 帧 / `r_frame_rate=15/1` / `avg_frame_rate=50/3` / `duration=4.000000`） |
+| M2-b | **像素级对拍** | — | ✅ **通过**：解码为 rawvideo rgba 后**逐字节比对，0 差异**（4,608,000 字节，含 alpha 通道） |
+| M2-c | **帧节奏对拍** | — | ✅ **通过**：逐帧 `pts_time`/`duration_time` 完全一致（0.07/0.06 交替，各 40/20 帧） |
+| M2-d | **输出时基决策** | 主机侧用主输入 fps 兜底 | ✅ **已修正**：改为复刻 CLI 的 `choose_out_timebase()`（见 §10.5 #15、§10.9） |
+| M2-e | 滤镜串一致性 | — | ✅ **通过**：设备端 `keying: filter = ...` 与宿主 CLI 用的串**逐字节一致**（含水印条件 `gt(X,132)*gt(Y,90)+lt(X,32)*lt(Y,18)`） |
+| M2-f | aarch64 真机 | 未上真机 | ⬜ 仍开放（R-13），上架前必做 |
+
+> **M2 的真正收获不是"抠像能跑"，而是暴露了一个此前从未被触发的引擎级缺陷**：输出时基的兜底策略。它在 C1 上恰好给出正确结果（因为 C1 的图输出帧率已知），在 C2 上则会把 15 fps 的时间戳压进 1/12 时基，**产生重复 DTS 并让 matroska 封装直接报错**。详见 §10.9。
 
 ---
 
@@ -752,6 +767,7 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | **R-13** | **未在 aarch64 真机上实跑**（仅 2in1 模拟器 x86_64） | 高 | — | aarch64 目标已交叉编译成功并校验 ELF（AArch64），但**未在真机安装运行**；M0.5 阶段复跑同一套探针 | ⬜ **新增，上架前必做** |
 | **R-14** | **aarch64 的 NEON 汇编在 Windows 宿主上不可用**（`--disable-asm` 构建） | 中 | 中 | 生产构建改用 Linux 宿主（WSL + Linux 版 OHOS NDK），ARM `.S` 路径正常且 NEON 可用 | ⬜ **新增，M0.5 处理** |
 | **R-15** | **精简构建漏配组件导致静默降级**（`--disable-everything` 下漏配 `--enable-parser=gif`，GIF 帧无法切分，帧数统计为 0 且**不报任何错**） | 中 | — | 构建后逐项核对 `config_components.h` 关键组件；`ms_pipeline` 的帧数统计改为「解码计数为 0 时保留容器值」 | ✅ **新增并已解决**（v1.2） |
+| **R-16** | **输出时基的兜底策略错误**（主输入 fps ≠ 图输出真实帧率时，把 15 fps 时间戳压进 1/12 时基 → **重复 DTS** → matroska 封装报 `non monotonically increasing dts`） | 高 | 中 | 复刻 CLI 的 `choose_out_timebase()`：帧率未知时回退到**图输出的时基**而非主输入 fps；并沿链回溯补回被 `setpts` 抹掉的帧率（见 §10.5 #15、§10.9） | ✅ **新增并已解决**（v1.3） |
 
 ---
 
@@ -947,6 +963,9 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 12 | 输出的 GIF **帧数统计为 0**，但整个转换**不报任何错** | 精简构建漏配 `--enable-parser=gif`：GIF 解复用器置 `need_parsing=AVSTREAM_PARSE_FULL_RAW`，没有 parser 时 `libavformat/demux.c:1411` 直接退化成吐原始块，解码器收到非关键帧块即报 `cannot decode frame without keyframe` | 构建脚本补 `--enable-parser=gif`；构建后核对 `config_components.h` 里 `CONFIG_GIF_PARSER 1` |
 | 13 | 帧数统计为 0 的**第二重原因**（修完 parser 仍可能踩） | 统计代码用解码计数**无条件覆盖**容器给的 `st->nb_frames`；而 GIF 解复用器 `gif_read_header` 扫描文件时其实已经数出了帧数（=24） | 解码计数为 0 时保留容器值，不用 0 覆盖 |
 | 14 | `hvigorw` 构建明明 `BUILD SUCCESSFUL` 却报退出码 1 | PowerShell 5.1 下 `$ErrorActionPreference='Stop'` 会把原生命令写到 **stderr** 的 WARN（`No signingConfig found`）升级成 `NativeCommandError` 终止 | 调原生命令前不要开 `Stop`，或把输出重定向后再判 `$LASTEXITCODE` |
+| 15 | matroska 封装报 `non monotonically increasing dts to muxer in stream 0: 17 >= 17` | **输出时基兜底错误**：`fps=15` 的链末端有 `setpts=PTS-STARTPTS`，FFmpeg 7.1 的 `setpts` 把输出链接的帧率标成**未知**（`libavfilter/setpts.c: config_output_video` → `l->frame_rate = {1,0}`），`concat` 随之输出 `1/0`；执行器此前用**主输入 fps**（12/1）兜底，把 15 fps 的时间戳压进 `1/12` 时基 → 步长 0.8 → **相邻帧落到同一 DTS** | 复刻 CLI 的 `fftools/ffmpeg_filter.c: choose_out_timebase()`：`tb = 1/图输出帧率`；帧率未知时 `tb = 图输出时基`（`1/1000000`，无损），**不再用主输入 fps** |
+| 16 | `setpts` 之后的链，帧率在 7.1.1 上"丢失"，但宿主 CLI（nightly）上还在 | 两端 ffmpeg 版本不同：宿主 `N-126303-g9f35e220ff-20260827` 的 `setpts` **保留**输入帧率，OHOS 侧固定的 **7.1.1** 把帧率置为未知 | 沿链**回溯**到最近一个仍带帧率的链接（`ff_filter_link(link)->frame_rate`），补回宿主版本会报出的值；帧率因此是 15/1，编码器时基 `1/15`，与宿主完全一致 |
+| 17 | 同一段视频两端产出的 GIF **字节不同**但画面相同 | 两端 ffmpeg 版本不同导致**调色板透明槽位索引不同**（宿主 255 / 7.1.1 侧 10）与 LZW 压缩流不同；GCT 的 RGB 完全一致 | 以**解码后逐字节比对**为验收口径（`tools/compare-gif.sh`，本轮用 rgba 含 alpha）；不追求压缩流字节一致 |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -974,6 +993,17 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | §4.5 ffmpeg 组件集 | 滤镜集齐全 | **补 `--enable-parser=gif`**（否则 GIF 帧数统计静默为 0，见 §10.5 #12） |
 | §7 风险表 | 14 项 | **15 项**：R-03 关闭；新增 R-15（精简构建漏配组件→静默降级，已解） |
 | §10 验证报告 | 仅 P1–P7 探针 | **新增 P8/P9 端到端探针**：C1 流水线在设备上真实产出 GIF，并与 Windows 黄金件逐像素比对 |
+
+**v1.3 修订（M2 抠像引擎移植）**
+
+| 设计条目 | v1.2 | **v1.3 修订** |
+|---|---|---|
+| §4.4 引擎内核 | 只覆盖 C1（`ms_pipeline.cpp`） | ✅ **扩展到 C2**：新增 `sdk/src/engine/ms_keying.{h,cpp}`（三段流水线），**原样编译** `sdk/src/gif_keying/mask_builder.cpp`，滤镜串零漂移 |
+| §4.4 执行器 · 输入绑定 | 一个输入喂一个 buffersrc | ✅ **扩展**：一个源可喂**多个** buffersrc（复刻 CLI 的「重复 `[0:v]` → 多个同名开放输入」语义），供 `mask_builder` 的两条并行链共用一次解码 |
+| §4.4 执行器 · 输出时基 | 「帧率未知 → 用主输入 fps 兜底」 | ✅ **修正**（R-16）：复刻 CLI 的 `choose_out_timebase()`；帧率未知时回退到**图输出时基**，并沿链回溯补回 `setpts` 抹掉的帧率 |
+| §7 风险表 | 15 项 | **16 项**：新增 R-16（输出时基兜底 → 重复 DTS，已解） |
+| §10 验证报告 | P1–P9 | **新增 P10**：C2 抠像端到端探针（`gifKeying`），并对 GIF 做 **rgba 逐字节 + 逐帧节奏**双重对拍 |
+| §9 V 清单 | 7 项闭环 | 不变（C2 属 M2 里程碑，不改变 V 清单状态） |
 
 ### 10.7 尚未闭环的项与建议动作
 
@@ -1034,6 +1064,70 @@ I A03200/MsVerify: P9 videoToGif  = rc=0 frames=24 size=480x640 fps=12 bytes=694
 | 数据通路 | mov 解复用器 → `st->codecpar->coded_side_data` → `avcodec_parameters_to_context` → `avctx->coded_side_data` → `ff_decode_frame_props` → **解码帧**的 `AV_FRAME_DATA_DISPLAYMATRIX` → 执行器读取并注入滤镜 |
 | 实测 | 输入 160×120 + 90° 矩阵 → 宿主 CLI 输出 **480×640**；设备输出 **480×640**；解码后 22,118,400 字节 **0 差异** → **R-03 关闭** |
 
+### 10.9 M2 抠像引擎移植端到端实测（v1.3 新增）
+
+**载体**：同 §10.8，原生侧新增 `gifKeying(input, output)`（`pipeline_probe.cpp` 的 `GifKeyingProbe`），ArkTS 侧 `Index.ets` 的 **P10** 探针调用。
+
+**引擎**：新增 `sdk/src/engine/ms_keying.{h,cpp}`（三段流水线），并把**未作任何修改**的 `sdk/src/gif_keying/mask_builder.cpp` 原样编译进鸿蒙工程 → **两端的滤镜串逐字节相同**。Windows 版 `sdk/src/gif_keying/gif_keying.cpp` 一行未改。
+
+**样例**：`test_key.gif`（160×120 / 24 帧 / 12 fps，背景精确 (231,225,223)、前景 (192,48,48)），以 rawfile 打进 HAP。
+
+#### 10.9.1 R-16：输出时基的兜底策略
+
+**现象**：设备端 P10 首次运行 `rc=3`，matroska 封装报
+`Application provided invalid, non monotonically increasing dts to muxer in stream 0: 17 >= 17`。
+
+**定位链**（逐层读 FFmpeg 7.1.1 源码得到）：
+
+| 层 | 事实 | 出处 |
+|---|---|---|
+| 滤镜串 | 末端是 `setpts=PTS-STARTPTS`，`concat` 的两个输入都经过它 | `sdk/src/gif_keying/mask_builder.cpp` |
+| `setpts` | **把输出链接的帧率硬编码为 `{1,0}`（未知）** | `libavfilter/setpts.c: config_output_video` → `l->frame_rate = (AVRational){ 1, 0 };` |
+| `concat` | 两段帧率不一致时把输出帧率置为 `1/0`；一致时取输入 0 的帧率 | `libavfilter/avf_concat.c: config_output` |
+| 帧率链 | `fps=15` → 15/1；经 `setpts` 后变 `1/0`；`concat` 两段都是 `1/0` → **相等** → 输出仍是 `1/0` | `libavfilter/vf_fps.c: ol->frame_rate = av_d2q(res, INT_MAX)` |
+| 宿主 CLI | 用的是 **nightly**（`N-126303-g9f35e220ff-20260827`），其 `setpts` **保留**输入帧率 → 图输出帧率 **15/1** | 实测：`fps=15,setpts=PTS-STARTPTS` → `r_frame_rate=15/1`；`fps=15,setpts=PTS-STARTPTS,split,concat` → 同样 15/1 |
+| CLI 的时基决策 | `tb = 1/图输出帧率`；帧率未知时才回退到帧自带的时基 | `fftools/ffmpeg_filter.c: choose_out_timebase()` |
+| 原执行器 | 图输出帧率 `1/0` 时**用主输入 fps（12/1）兜底** → `enc_tb = 1/12` | `sdk/src/engine/ms_inproc_exec.cpp` |
+| 后果 | 15 fps 的时间戳（步长 66667/1e6）重采样到 `1/12` → 步长 0.8 → **相邻帧落到同一 DTS** → 封装失败 | — |
+
+**修正**（`sdk/src/engine/ms_inproc_exec.cpp`）：
+
+1. **时基决策改为复刻 CLI**：`tb = 1/图输出帧率`；帧率未知时 `tb = 图输出时基`（本例 `1/1000000`，无损），**不再用主输入 fps**。
+2. **沿链回溯补回帧率**：从 sink 往上游找最近一个仍带帧率的链接（`ff_filter_link(link)->frame_rate`，需 `#include <libavfilter/filters.h>`，它只依赖 `avfilter.h`）。这复现了宿主 nightly 的 `setpts` 语义 → 帧率 **15/1**、编码器时基 **1/15**、容器 `avg_frame_rate = 15/1`（进而让 matroska 写出 `DefaultDuration = 66666666 ns`，与宿主 mkv 一致）。
+
+> **为什么 C1 一直没暴露这个缺陷**：C1 stage A 的图输出帧率**已知**（`fps=N` 滤镜给出），stage B（ping-pong）虽然也经过 `setpts`，但回溯到的上游帧率恰好等于主输入 fps，所以旧兜底策略**碰巧**给出相同结果（设备日志：`output rate=12/1 (sink 1/0) encoder tb=1/12`）。**兜底值只有在"图输出帧率 ≠ 主输入 fps"时才会显形** —— C2 的 `fps=15` vs 输入 12fps 正好命中。
+
+#### 10.9.2 设备端实测结果
+
+hilog 原始输出（节选）：
+
+```
+I A03200/MsVerify: keying: filter = [0:v]fps=15,scale=160:-2,format=rgb24[rgb];[0:v]fps=15,...
+I A03200/MsVerify: keying: stage A start (mask chain -> ffv1)
+I A03200/MsVerify: negotiated rate=1/0 tb=1/1000000 size=160x120 src0fps=12/1
+I A03200/MsVerify: output rate=15/1 (sink 1/0) encoder tb=1/15
+I A03200/MsVerify: keying: stage C1 start (palettegen)
+I A03200/MsVerify: negotiated rate=15/1 tb=1/1000 size=16x16 src0fps=15/1
+I A03200/MsVerify: keying: stage C2 start (paletteuse)
+I A03200/MsVerify: negotiated rate=15/1 tb=1/1000 size=160x120 src0fps=15/1
+I A03200/MsVerify: probe count: streams=1 cidx=0 packets=61 counted=60
+I A03200/MsVerify: probe frames: .../out_key.gif -> 60 fps=15.000000
+I A03200/MsVerify: P10 gifKeying   = rc=0 inFrames=24 frames=60 size=160x120 bytes=12069
+```
+
+**黄金件复现**：用宿主 `electron-app/resources/sdk/ffmpeg.exe` 以**同一滤镜串**复跑 stage A，产物 `exp_fix.mkv` 与既有黄金件 `g_a.mkv` **解码后 4,608,000 字节 0 差异**（容器字节差异仅来自 SegmentUID/DateUTC）→ 黄金件本身可信。
+
+**像素级对拍**（`tools/compare-gif.sh`）：
+
+| 用例 | 宿主黄金件 | 设备产物 | 容器统计 | 解码后比对 | 结论 |
+|---|---|---|---|---|---|
+| C2 抠像 GIF | `tmp/harmony-verify/key/win_gold_key.gif`（12,021 B） | 12,069 B | 160×120 / 60 帧 / `r_frame_rate=15/1` / `avg_frame_rate=50/3` / `duration=4.000000` —— **逐字段一致** | rgb24 3,456,000 B **0 差异**；**rgba 4,608,000 B 0 差异**（含 alpha） | ✅ 像素一致 |
+| C2 帧节奏 | 同上 | 同上 | — | 逐帧 `pts_time`/`duration_time` **完全一致**（0.07 s ×40 + 0.06 s ×20） | ✅ 节奏一致 |
+| C1 回归 · 普通 | `electron-app/_test/out.gif` | 483,220 B | 与 v1.2 记录**完全相同** | v1.2 已验证 0 差异，本次字节数未变 | ✅ 无回归 |
+| C1 回归 · 旋转 | `tmp/harmony-verify/rot/win_gold_rot90.gif` | 694,719 B | 同上 | 同上 | ✅ 无回归 |
+
+> **48 字节的文件大小差异来自哪里**：GCT（调色板 RGB）**逐字节相同**，差异从第 806 字节开始 —— 宿主的 GIF 透明色索引是 **255**，7.1.1 侧是 **10**（`palettegen` 的 `reserve_transparent` 槽位落点不同），连带 LZW 压缩流选择不同的调色板索引。**解码后 RGBA 逐字节一致**，画面与透明效果完全等价。
+
 ---
 
 ## 附录 A：能力搬运映射表（逐文件）
@@ -1076,3 +1170,4 @@ I A03200/MsVerify: P9 videoToGif  = rc=0 frames=24 size=480x640 fps=12 bytes=694
 | v1.0 | 2026-11-18 | 初稿：现状盘点、能力对照、方案选型、目标架构、难点与解法、里程碑、风险、验收、V 清单 |
 | v1.1 | 2026-11-18 | **完成本机实测验证**（HarmonyOS 26.0.0 API 26 + 2in1 模拟器）：新增 §10 验证报告；V1/V3/V4/V5/V7/V8 闭环，新增 V11/V12；R-01/R-02/R-04/R-06 解除；新增 R-12/R-13/R-14；修正 SDK 版本（API 26）、PNG 编码方案（deflate 下沉原生）、进程模型（两段式）、FFmpeg 7.x avfilter API 差异、`geq` 输出为 planar `gbrap`；补入实测的双架构 ffmpeg configure 参数、产物体积与 11 条踩坑速查 |
 | v1.2 | 2026-11-18 | **完成 M1 引擎移植实测**：新增 `sdk/src/engine/`（进程内执行器 + C1 流水线，Windows 路径零改动）与 `harmony-app/` 正式工程；P8/P9 端到端探针在 2in1 上产出 GIF，与 Windows 黄金件**解码后逐字节 0 差异**（普通 12,441,600 B / 旋转 22,118,400 B）；**R-03 自动旋转解除**（竖拍样例 480×640 对齐）；**修复 `frames=0`**（根因：精简构建漏配 `--enable-parser=gif`，新增 R-15）；新增 §10.8；踩坑速查增至 14 条；新增 `tools/compare-gif.sh` |
+| v1.3 | 2026-11-19 | **完成 M2 抠像引擎移植实测**：新增 `sdk/src/engine/ms_keying.{h,cpp}` 并原样复用 `mask_builder.cpp`；执行器支持「一个源喂多个 buffersrc」（复刻 CLI 的重复 `[0:v]` 语义）；**修正输出时基兜底策略**（新增 R-16：帧率未知时改回退到图输出时基 + 沿链回溯补回 `setpts` 抹掉的帧率，修掉 `non monotonically increasing dts`）；P10 探针在 2in1 上产出 GIF，与 Windows 黄金件 **rgba 逐字节 0 差异**（4,608,000 B）且**逐帧节奏一致**；新增 §10.9；踩坑速查增至 17 条 |
