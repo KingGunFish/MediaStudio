@@ -63,7 +63,10 @@ if [ -z "$TARGET" ]; then
   exit 1
 fi
 
-OUT_DIR="${2:-$MS_ROOT/tmp/ohos-device-check/$TARGET}"
+# A TCP target carries a colon ("127.0.0.1:5557"), which cannot appear in a
+# Windows path, so the target is sanitised before it becomes a directory name.
+SAFE_TARGET="$(printf '%s' "$TARGET" | tr -c 'A-Za-z0-9._-' '_')"
+OUT_DIR="${2:-$MS_ROOT/tmp/ohos-device-check/$SAFE_TARGET}"
 mkdir -p "$OUT_DIR"
 
 echo "=== target: $TARGET ==="
