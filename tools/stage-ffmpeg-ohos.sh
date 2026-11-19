@@ -33,6 +33,15 @@ for ARCH in "${ARCHES[@]}"; do
   BUILD="$MS_OHOS_WORK/build-ohos-$ARCH"
   [ -d "$BUILD" ] || { echo "skip $ARCH (no build dir)"; continue; }
 
+  # The public headers are copied from the FFmpeg source tree. Bail out before
+  # touching $INC if that tree is gone, otherwise the include directory would
+  # be wiped and left empty.
+  if [ ! -d "$FFMPEG_SRC_DIR/libavutil" ]; then
+    echo "FFmpeg source tree not found: $FFMPEG_SRC_DIR" >&2
+    echo "Re-extract the FFmpeg 7.1.1 source before staging." >&2
+    exit 1
+  fi
+
   # Headers: the public API of every enabled component plus the generated
   # config headers that the build produced.
   rm -rf "$INC"
