@@ -48,6 +48,12 @@ struct VideoInfo {
 // is reported as 0 (N/A) for matroska.
 bool probe_video(const std::string& path, VideoInfo& out, bool count_frames = false);
 
+// Rotation of the source video in degrees (0, 90, 180 or 270), normalised the
+// way fftools/cmdutils.c:get_rotation() does it. The CLI auto-rotates by 90 /
+// 270 before the user's filters run, so the frame the filters see is the
+// transposed one.
+int probe_source_rotation(const std::string& path);
+
 // Size of a file in bytes, 0 when it cannot be read.
 int64_t file_size_of(const std::string& path);
 

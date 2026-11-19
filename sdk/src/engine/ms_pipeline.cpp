@@ -8,9 +8,11 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/display.h>
 #include <libavutil/pixdesc.h>
 }
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -91,6 +93,44 @@ int64_t file_size_of(const std::string& path) {
     long n = std::ftell(f);
     std::fclose(f);
     return static_cast<int64_t>(n);
+}
+
+int probe_source_rotation(const std::string& path) {
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.c_str(), nullptr, nullptr) < 0 || fmt == nullptr) {
+        return 0;
+    }
+    int rotation = 0;
+    if (avformat_find_stream_info(fmt, nullptr) >= 0) {
+        for (unsigned i = 0; i < fmt->nb_streams; i++) {
+            AVStream* st = fmt->streams[i];
+            if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
+                continue;
+            }
+            // The display matrix travels as coded side data of the stream.
+            const AVPacketSideData* dm = nullptr;
+            for (int k = 0; k < st->codecpar->nb_coded_side_data; k++) {
+                if (st->codecpar->coded_side_data[k].type == AV_PKT_DATA_DISPLAYMATRIX) {
+                    dm = &st->codecpar->coded_side_data[k];
+                    break;
+                }
+            }
+            if (dm == nullptr || dm->size < sizeof(int32_t) * 9) {
+                break;
+            }
+            // fftools/ffmpeg.c:get_rotation()
+            const int32_t* matrix = reinterpret_cast<const int32_t*>(dm->data);
+            double theta = -std::round(av_display_rotation_get(matrix));
+            theta -= 360 * std::floor(theta / 360 + 0.9 / 360);
+            rotation = static_cast<int>(std::lround(theta));
+            break;
+        }
+    }
+    avformat_close_input(&fmt);
+    // The CLI auto-rotates by 90 or 270, so the frame the filters see is the
+    // transposed one.
+    const int norm = ((rotation % 360) + 360) % 360;
+    return (norm == 90 || norm == 270) ? 90 : 0;
 }
 
 bool probe_video(const std::string& path, VideoInfo& out, bool count_frames) {

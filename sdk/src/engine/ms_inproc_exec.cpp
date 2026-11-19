@@ -312,6 +312,7 @@ struct EncoderState {
     AVPacket* pkt = nullptr;
     AVFrame* frame = nullptr;
     AVIOContext* raw_pb = nullptr;     // raw image mode
+    int frames_in = 0;                 // frames handed to the encoder
 
     ~EncoderState() {
         av_packet_free(&pkt);
@@ -488,8 +489,14 @@ int write_frame(EncoderState& e, AVFrame* src, AVRational src_tb) {
 
     ret = avcodec_send_frame(e.cc, dst);
     if (ret < 0) {
+        char reason[128] = {0};
+        char buf[192];
+        av_strerror(ret, reason, sizeof(reason));
+        std::snprintf(buf, sizeof(buf), "encoder rejected frame %d: %s", e.frames_in, reason);
+        inproc_log(buf);
         return ret;
     }
+    e.frames_in++;
     for (;;) {
         ret = avcodec_receive_packet(e.cc, e.pkt);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
@@ -953,12 +960,23 @@ int run_inproc_job(const InprocJob& job,
             // The frame goes to every buffer source that references this
             // input, so parallel chains see the very same frames - which is
             // what keeps them in sync for the framesync based filters.
+            bool refused = false;
             for (size_t k = 0; k < ctxs.size(); k++) {
                 r = av_buffersrc_add_frame_flags(ctxs[k], f, AV_BUFFERSRC_FLAG_KEEP_REF);
                 if (r < 0) {
                     av_frame_free(&f);
+                    if (r == AVERROR_EOF) {
+                        // A filter that reached its end (trim, select, ...)
+                        // makes the graph refuse further frames. That is the
+                        // end of the stream, not a failure.
+                        refused = true;
+                        break;
+                    }
                     return r;
                 }
+            }
+            if (refused) {
+                break;
             }
             av_frame_free(&f);
             for (;;) {
@@ -1040,6 +1058,12 @@ int run_inproc_job(const InprocJob& job,
             avfilter_graph_free(&graph);
             return ret;
         }
+    }
+    {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "job finished: frames_out=%d frames_in=%d",
+                      frames_out, enc.frames_in);
+        inproc_log(buf);
     }
 
     av_frame_free(&out);
