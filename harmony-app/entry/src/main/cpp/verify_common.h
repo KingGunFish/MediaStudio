@@ -33,4 +33,11 @@ napi_value GifEncodeProbe(napi_env env, napi_callback_info info);
 napi_value VideoToGifProbe(napi_env env, napi_callback_info info);
 napi_value GifKeyingProbe(napi_env env, napi_callback_info info);
 
+/* Implemented in media_api.cpp - the API the application pages call */
+napi_value MsProbeMedia(napi_env env, napi_callback_info info);
+napi_value MsConvertVideoToGif(napi_env env, napi_callback_info info);
+napi_value MsConvertGifKeying(napi_env env, napi_callback_info info);
+napi_value MsConvertVideoCrop(napi_env env, napi_callback_info info);
+napi_value MsDecodeFirstFrame(napi_env env, napi_callback_info info);
+
 #endif /* MSVERIFY_COMMON_H */

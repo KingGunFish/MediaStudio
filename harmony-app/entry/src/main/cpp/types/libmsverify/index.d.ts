@@ -54,3 +54,116 @@ export const videoToGif: (inputPath: string, outputPath: string, keepIntermediat
  * the output has to match the Windows build pixel by pixel.
  */
 export const gifKeying: (inputPath: string, outputPath: string) => string;
+
+// ---------------------------------------------------------------------------
+// Production API
+//
+// The option objects use the same field names as the Windows renderer
+// (electron-app/src/renderer/src/types.ts), so both platforms speak one
+// contract.
+// ---------------------------------------------------------------------------
+
+/** Geometry and metadata of a media file. */
+export interface MediaInfo {
+  ok: boolean;
+  code: number;
+  message: string;
+  width: number;
+  height: number;
+  /** frames per second */
+  fps: number;
+  /** seconds */
+  duration: number;
+  nbFrames: number;
+  fileSize: number;
+  codec: string;
+}
+
+/** Outcome of a conversion. */
+export interface MediaResult {
+  ok: boolean;
+  code: number;
+  message: string;
+  frameCount: number;
+  outputWidth: number;
+  outputHeight: number;
+  fileSize: number;
+  durationMs: number;
+}
+
+export interface VideoToGifOptions {
+  width?: number;
+  height?: number;
+  fps?: number;
+  maxColors?: number;
+  quality?: number;
+  pingPong?: boolean;
+  startSeconds?: number;
+  endSeconds?: number;
+}
+
+export type KeyingAlgorithm = 'brightness' | 'white' | 'chroma' | 'distance' | 'rgbSplit';
+
+export interface KeyingOptions {
+  algorithm?: KeyingAlgorithm;
+  brightnessThreshold?: number;
+  whiteThreshold?: number;
+  distanceThreshold?: number;
+  bgR?: number;
+  bgG?: number;
+  bgB?: number;
+  channelThreshold?: number;
+  useChannelFallback?: boolean;
+  watermarkBottomRight?: boolean;
+  watermarkTopLeft?: boolean;
+  maxColors?: number;
+  quality?: number;
+  pingPong?: boolean;
+}
+
+export interface VideoCropOptions {
+  outputWidth: number;
+  outputHeight: number;
+  /** source pixels per canvas pixel */
+  scale: number;
+  /** video top-left corner, in canvas coordinates */
+  offsetX: number;
+  offsetY: number;
+  /** '#rrggbb' - fills the area the video does not cover */
+  background: string;
+  /** 0 (lossless) .. 51 (worst) */
+  crf: number;
+  keepAudio: boolean;
+  sourceWidth?: number;
+  sourceHeight?: number;
+}
+
+/** Progress callback: 0..1 and a short message. */
+export type ProgressCallback = (value: number, message: string) => void;
+
+/** Probes a media file. Runs off the UI thread. */
+export const probeMedia: (path: string) => Promise<MediaInfo>;
+
+/** Video -> animated GIF. */
+export const convertVideoToGif: (inputPath: string, outputPath: string,
+  options?: VideoToGifOptions, onProgress?: ProgressCallback) => Promise<MediaResult>;
+
+/** Animated GIF -> animated GIF with the background keyed out. */
+export const convertGifKeying: (inputPath: string, outputPath: string,
+  options?: KeyingOptions, onProgress?: ProgressCallback) => Promise<MediaResult>;
+
+/** Video -> fixed size canvas, honouring the pan/zoom transform. */
+export const convertVideoCrop: (inputPath: string, outputPath: string,
+  options: VideoCropOptions, onProgress?: ProgressCallback) => Promise<MediaResult>;
+
+/** The first frame of a video, decoded and written as a PNG. */
+export interface FrameInfo {
+  ok: boolean;
+  code: number;
+  message: string;
+  width: number;
+  height: number;
+  path: string;
+}
+
+export const decodeFirstFrame: (inputPath: string, outputPath: string) => FrameInfo;

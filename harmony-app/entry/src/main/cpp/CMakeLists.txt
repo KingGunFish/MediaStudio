@@ -35,6 +35,7 @@ add_library(ms_engine STATIC
   ${MS_SDK_ROOT}/src/engine/ms_inproc_exec.cpp
   ${MS_SDK_ROOT}/src/engine/ms_pipeline.cpp
   ${MS_SDK_ROOT}/src/engine/ms_keying.cpp
+  ${MS_SDK_ROOT}/src/engine/ms_crop.cpp
   # The keying filter string is produced by the shared, unmodified
   # mask_builder.cpp so both platforms run byte-for-byte the same graph.
   ${MS_SDK_ROOT}/src/gif_keying/mask_builder.cpp
@@ -55,7 +56,7 @@ target_link_libraries(ms_engine
 set_target_properties(ms_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ---------------------------------------------------------------- NAPI module
-add_library(msverify SHARED napi_init.cpp ffmpeg_probe.cpp pipeline_probe.cpp)
+add_library(msverify SHARED napi_init.cpp ffmpeg_probe.cpp pipeline_probe.cpp media_api.cpp)
 
 target_include_directories(msverify PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}

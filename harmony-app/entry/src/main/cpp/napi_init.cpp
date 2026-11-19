@@ -208,6 +208,12 @@ static napi_value Init(napi_env env, napi_value exports)
         {"gifEncodeProbe", nullptr, GifEncodeProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"videoToGif", nullptr, VideoToGifProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"gifKeying", nullptr, GifKeyingProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
+        // Production API used by the application pages.
+        {"probeMedia", nullptr, MsProbeMedia, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"convertVideoToGif", nullptr, MsConvertVideoToGif, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"convertGifKeying", nullptr, MsConvertGifKeying, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"convertVideoCrop", nullptr, MsConvertVideoCrop, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"decodeFirstFrame", nullptr, MsDecodeFirstFrame, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
