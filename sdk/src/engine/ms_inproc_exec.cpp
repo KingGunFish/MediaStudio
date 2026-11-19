@@ -30,6 +30,10 @@ extern "C" {
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
+// The frame rate of a link lives in FFmpeg's internal FilterLink structure;
+// the public AVFilterLink does not expose it. filters.h only pulls in
+// avfilter.h, so it is safe to use here.
+#include <libavfilter/filters.h>
 }
 
 #include <cmath>
@@ -351,6 +355,34 @@ std::string encoder_format_list(const AVCodec* enc, const std::string& pix_fmt) 
     return out;
 }
 
+// The rate of the frames the graph delivers.
+//
+// The ffmpeg build that ships with the Windows application (the one that
+// produced the reference output) keeps the incoming frame rate when the
+// "setpts" filter rewrites the timestamps, while FFmpeg 7.1 marks the frame
+// rate of that link as unknown (libavfilter/setpts.c: config_output_video).
+// Both the ping-pong stage of the GIF pipeline and the keying chain end in
+// "setpts=PTS-STARTPTS", so the graph reports "unknown" here but a concrete
+// rate there - and the ffmpeg CLI derives its output time base from exactly
+// that rate. Walk back through the chain to the closest link that still
+// carries a rate to recover the value the older setpts would have reported.
+AVRational effective_output_rate(AVFilterContext* sink, AVRational sink_rate) {
+    if (sink_rate.num > 0 && sink_rate.den > 0) {
+        return sink_rate;
+    }
+    AVFilterLink* link =
+        (sink != nullptr && sink->nb_inputs > 0) ? sink->inputs[0] : nullptr;
+    while (link != nullptr) {
+        AVRational rate = ff_filter_link(link)->frame_rate;
+        if (rate.num > 0 && rate.den > 0) {
+            return rate;
+        }
+        AVFilterContext* src = link->src;
+        link = (src != nullptr && src->nb_inputs > 0) ? src->inputs[0] : nullptr;
+    }
+    return AVRational{0, 1};
+}
+
 int open_encoder(const InprocJob& job, EncoderState& e, const AVCodec* enc,
                  int width, int height, enum AVPixelFormat pix_fmt,
                  AVRational time_base) {
@@ -640,10 +672,51 @@ int run_inproc_job(const InprocJob& job,
         return ret;
     }
 
-    // ---- 4. create one buffer source per input --------------------------
-    std::vector<AVFilterContext*> src_ctx(sources.size(), nullptr);
-    for (size_t i = 0; i < sources.size(); i++) {
-        SourceState& s = sources[i];
+    // ---- 4. bind the graph's open input pads ----------------------------
+    // Every reference to an input gets its own buffer source, exactly like the
+    // CLI does: it creates one input filter per open pad, so a filter graph
+    // that mentions "0:v" twice ends up with two buffer sources that are fed
+    // from the same decoder. The keying filter that mask_builder.cpp builds
+    // relies on this ("[0:v]... [rgb]" plus "[0:v]... [mask_a]"), and the
+    // alphamerge at the end of that chain synchronises the two by PTS.
+    std::vector<std::vector<AVFilterContext*>> src_ctx(sources.size());
+    std::vector<bool> used(sources.size(), false);
+    for (AVFilterInOut* cur = graph_inputs; cur != nullptr;) {
+        AVFilterInOut* next = cur->next;
+        cur->next = nullptr;
+
+        // A labelled open input ("0:v") names its input file explicitly and
+        // may be repeated; an unlabelled one takes the next free input.
+        int idx = -1;
+        bool labelled = false;
+        if (cur->name != nullptr && cur->name[0] >= '0' && cur->name[0] <= '9') {
+            idx = cur->name[0] - '0';
+            labelled = true;
+        }
+        if (labelled) {
+            if (idx < 0 || idx >= static_cast<int>(sources.size())) {
+                cleanup_inputs(cur);
+                avfilter_graph_free(&graph);
+                return AVERROR(EINVAL);
+            }
+        } else {
+            for (size_t k = 0; k < sources.size(); k++) {
+                if (!used[k]) {
+                    idx = static_cast<int>(k);
+                    break;
+                }
+            }
+            if (idx < 0) {
+                cleanup_inputs(cur);
+                avfilter_graph_free(&graph);
+                return AVERROR(EINVAL);
+            }
+            used[idx] = true;
+        }
+
+        // This reference's own buffer source, configured from the source's
+        // geometry just like the CLI's input filter.
+        SourceState& s = sources[idx];
         AVRational sar = (s.sar.num > 0 && s.sar.den > 0) ? s.sar : AVRational{1, 1};
         char args[320];
         std::snprintf(args, sizeof(args),
@@ -652,48 +725,27 @@ int run_inproc_job(const InprocJob& job,
                       s.width, s.height, static_cast<int>(s.pix_fmt), s.tb.num,
                       s.tb.den, sar.num, sar.den, s.colorspace, s.color_range);
         if (s.fps.num > 0 && s.fps.den > 0) {
-            size_t used = std::strlen(args);
-            std::snprintf(args + used, sizeof(args) - used, ":frame_rate=%d/%d",
+            size_t used_len = std::strlen(args);
+            std::snprintf(args + used_len, sizeof(args) - used_len, ":frame_rate=%d/%d",
                           s.fps.num, s.fps.den);
         }
-        ret = avfilter_graph_create_filter(&src_ctx[i], avfilter_get_by_name("buffer"),
-                                           label_of(static_cast<int>(i)).c_str(), args,
-                                           nullptr, graph);
+        std::string src_name = label_of(idx);
+        if (!src_ctx[idx].empty()) {
+            src_name += "_" + std::to_string(src_ctx[idx].size());
+        }
+        AVFilterContext* src = nullptr;
+        ret = avfilter_graph_create_filter(&src, avfilter_get_by_name("buffer"),
+                                           src_name.c_str(), args, nullptr, graph);
         if (ret < 0) {
+            cleanup_inputs(cur);
             avfilter_graph_free(&graph);
             return ret;
         }
-    }
-
-    // ---- 5. bind the graph's open input pads ----------------------------
-    std::vector<bool> used(sources.size(), false);
-    for (AVFilterInOut* cur = graph_inputs; cur != nullptr;) {
-        AVFilterInOut* next = cur->next;
-        cur->next = nullptr;
-
-        int idx = -1;
-        if (cur->name != nullptr && cur->name[0] >= '0' && cur->name[0] <= '9') {
-            idx = cur->name[0] - '0';
-        }
-        if (idx < 0 || idx >= static_cast<int>(sources.size()) || used[idx]) {
-            idx = -1;
-            for (size_t k = 0; k < sources.size(); k++) {
-                if (!used[k]) {
-                    idx = static_cast<int>(k);
-                    break;
-                }
-            }
-        }
-        if (idx < 0) {
-            cleanup_inputs(cur);
-            avfilter_graph_free(&graph);
-            return AVERROR(EINVAL);
-        }
-        used[idx] = true;
+        src_ctx[idx].push_back(src);
 
         // The CLI injects the rotation filters between the buffer source and
         // the user's chain; do the same so portrait videos stay upright.
-        AVFilterContext* head = src_ctx[idx];
+        AVFilterContext* head = src;
         std::vector<FilterSpec> rots =
             autorotate_filters(sources[idx].has_displaymatrix ? sources[idx].displaymatrix
                                                              : nullptr);
@@ -803,15 +855,25 @@ int run_inproc_job(const InprocJob& job,
 
     // ---- 8. open the encoder --------------------------------------------
     EncoderState enc;
-    // The frame rate of the graph output is not always known: filters such
-    // as concat drop it. Fall back to the rate of the primary input so that
-    // the container keeps the original cadence; the ffmpeg CLI reaches the
-    // same result through the frame timestamps it writes.
-    AVRational eff_rate = out_rate;
-    if (eff_rate.num <= 0 || eff_rate.den <= 0) {
-        eff_rate = sources[0].fps;
+    // The ffmpeg CLI derives the output time base from the frame rate of the
+    // graph (fftools/ffmpeg_filter.c: choose_out_timebase): tb = 1/rate, and
+    // when the rate is unknown it falls back to the time base that the frames
+    // carry. Falling back to the rate of the primary input instead would
+    // squeeze the timestamps of a chain that runs at a different rate into
+    // the wrong base and produce duplicate DTS values.
+    AVRational eff_rate = effective_output_rate(sink, out_rate);
+    AVRational enc_tb = av_inv_q(eff_rate);
+    if (!(enc_tb.num > 0 && enc_tb.den > 0)) {
+        enc_tb = out_tb;
     }
-    AVRational enc_tb = (eff_rate.num > 0 && eff_rate.den > 0) ? av_inv_q(eff_rate) : out_tb;
+    {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "output rate=%d/%d (sink %d/%d) encoder tb=%d/%d",
+                      eff_rate.num, eff_rate.den, out_rate.num, out_rate.den,
+                      enc_tb.num, enc_tb.den);
+        inproc_log(buf);
+    }
     ret = open_encoder(job, enc, enc_codec, out_w, out_h, out_fmt, enc_tb);
     if (ret < 0) {
         avfilter_graph_free(&graph);
@@ -832,10 +894,12 @@ int run_inproc_job(const InprocJob& job,
         }
         AVFrame* f = sources[i].mem_frame;
         f->pts = 0;
-        ret = av_buffersrc_add_frame_flags(src_ctx[i], f, AV_BUFFERSRC_FLAG_KEEP_REF);
-        if (ret < 0) {
-            avfilter_graph_free(&graph);
-            return ret;
+        for (size_t k = 0; k < src_ctx[i].size(); k++) {
+            ret = av_buffersrc_add_frame_flags(src_ctx[i][k], f, AV_BUFFERSRC_FLAG_KEEP_REF);
+            if (ret < 0) {
+                avfilter_graph_free(&graph);
+                return ret;
+            }
         }
     }
 
@@ -867,6 +931,7 @@ int run_inproc_job(const InprocJob& job,
     // Pumps one stream source into the graph.
     auto pump_source = [&](size_t idx) -> int {
         SourceState& s = sources[idx];
+        const std::vector<AVFilterContext*>& ctxs = src_ctx[idx];
         for (;;) {
             AVFrame* f = nullptr;
             int r = decoder_next(s.dec, &f);
@@ -885,11 +950,17 @@ int run_inproc_job(const InprocJob& job,
                 // The CLI drops the matrix once it has been applied.
                 av_frame_remove_side_data(f, AV_FRAME_DATA_DISPLAYMATRIX);
             }
-            r = av_buffersrc_add_frame_flags(src_ctx[idx], f, AV_BUFFERSRC_FLAG_KEEP_REF);
-            av_frame_free(&f);
-            if (r < 0) {
-                return r;
+            // The frame goes to every buffer source that references this
+            // input, so parallel chains see the very same frames - which is
+            // what keeps them in sync for the framesync based filters.
+            for (size_t k = 0; k < ctxs.size(); k++) {
+                r = av_buffersrc_add_frame_flags(ctxs[k], f, AV_BUFFERSRC_FLAG_KEEP_REF);
+                if (r < 0) {
+                    av_frame_free(&f);
+                    return r;
+                }
             }
+            av_frame_free(&f);
             for (;;) {
                 r = av_buffersink_get_frame(sink, out);
                 if (r < 0) {
@@ -913,9 +984,13 @@ int run_inproc_job(const InprocJob& job,
                 }
             }
         }
-        // EOF for this source.
-        int eof_ret = av_buffersrc_add_frame_flags(src_ctx[idx], nullptr, 0);
-        (void)eof_ret;
+        // EOF for this source: every buffer source that references it has to
+        // see the end of the stream, otherwise the framesync filters would
+        // never flush.
+        for (size_t k = 0; k < ctxs.size(); k++) {
+            int eof_ret = av_buffersrc_add_frame_flags(ctxs[k], nullptr, 0);
+            (void)eof_ret;
+        }
         for (;;) {
             int r = av_buffersink_get_frame(sink, out);
             if (r < 0) {

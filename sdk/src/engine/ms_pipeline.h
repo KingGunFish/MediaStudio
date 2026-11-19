@@ -48,6 +48,9 @@ struct VideoInfo {
 // is reported as 0 (N/A) for matroska.
 bool probe_video(const std::string& path, VideoInfo& out, bool count_frames = false);
 
+// Size of a file in bytes, 0 when it cannot be read.
+int64_t file_size_of(const std::string& path);
+
 struct VideoToGifOptions {
     int width = 0;
     int height = 0;

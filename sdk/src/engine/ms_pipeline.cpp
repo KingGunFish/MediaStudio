@@ -60,17 +60,6 @@ void normalize_video_options(VideoToGifOptions& opts, const VideoInfo& info) {
     }
 }
 
-int file_size_of(const std::string& path) {
-    FILE* f = std::fopen(path.c_str(), "rb");
-    if (f == nullptr) {
-        return 0;
-    }
-    std::fseek(f, 0, SEEK_END);
-    long n = std::ftell(f);
-    std::fclose(f);
-    return static_cast<int>(n);
-}
-
 // Progress adapter: maps the progress of one stage onto a slice of the
 // overall progress, the same way the Windows implementation does.
 struct StageProgress {
@@ -92,6 +81,17 @@ struct StageProgress {
 };
 
 }  // namespace
+
+int64_t file_size_of(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (f == nullptr) {
+        return 0;
+    }
+    std::fseek(f, 0, SEEK_END);
+    long n = std::ftell(f);
+    std::fclose(f);
+    return static_cast<int64_t>(n);
+}
 
 bool probe_video(const std::string& path, VideoInfo& out, bool count_frames) {
     out = VideoInfo{};
