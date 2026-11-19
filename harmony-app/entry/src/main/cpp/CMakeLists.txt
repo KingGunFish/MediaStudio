@@ -11,6 +11,17 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(FFMPEG_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg)
 set(FFMPEG_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../libs/${OHOS_ARCH})
 
+# config.h and libavutil/avconfig.h are generated per architecture, so the
+# ABI overlay directory has to come first on the include path. Without it an
+# arm64 build would silently pick up the x86_64 headers.
+set(FFMPEG_INC_DIR ${FFMPEG_ROOT}/include)
+set(FFMPEG_ABI_INC_DIR ${FFMPEG_INC_DIR}/${OHOS_ARCH})
+if(NOT EXISTS "${FFMPEG_ABI_INC_DIR}/config.h")
+  message(FATAL_ERROR
+    "missing per-ABI FFmpeg headers: ${FFMPEG_ABI_INC_DIR}/config.h\n"
+    "Run tools/stage-ffmpeg-ohos.sh before building.")
+endif()
+
 add_library(ff_avutil SHARED IMPORTED)
 add_library(ff_avcodec SHARED IMPORTED)
 add_library(ff_avformat SHARED IMPORTED)
@@ -43,7 +54,8 @@ add_library(ms_engine STATIC
 target_include_directories(ms_engine PUBLIC
   ${MS_SDK_ROOT}/src/engine
   ${MS_SDK_ROOT}/include
-  ${FFMPEG_ROOT}/include
+  ${FFMPEG_ABI_INC_DIR}
+  ${FFMPEG_INC_DIR}
 )
 target_link_libraries(ms_engine
   ff_avutil
@@ -60,7 +72,8 @@ add_library(msverify SHARED napi_init.cpp ffmpeg_probe.cpp pipeline_probe.cpp me
 
 target_include_directories(msverify PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
-  ${FFMPEG_ROOT}/include
+  ${FFMPEG_ABI_INC_DIR}
+  ${FFMPEG_INC_DIR}
 )
 
 target_link_libraries(msverify

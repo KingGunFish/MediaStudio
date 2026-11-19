@@ -29,38 +29,45 @@ if [ ${#ARCHES[@]} -eq 0 ]; then
   exit 1
 fi
 
+# The public headers are copied from the FFmpeg source tree. They are the same
+# for every architecture, so they are staged once. Bail out before touching
+# $INC if that tree is gone, otherwise the include directory would be wiped and
+# left empty.
+if [ ! -d "$FFMPEG_SRC_DIR/libavutil" ]; then
+  echo "FFmpeg source tree not found: $FFMPEG_SRC_DIR" >&2
+  echo "Re-extract the FFmpeg 7.1.1 source before staging." >&2
+  exit 1
+fi
+
+rm -rf "$INC"
+mkdir -p "$INC"
+for L in libavutil libavcodec libavformat libavfilter libswscale libswresample; do
+  mkdir -p "$INC/$L"
+  cp "$FFMPEG_SRC_DIR/$L"/*.h "$INC/$L/"
+done
+echo "shared headers: $(find "$INC" -name '*.h' | wc -l)"
+
 for ARCH in "${ARCHES[@]}"; do
   BUILD="$MS_OHOS_WORK/build-ohos-$ARCH"
   [ -d "$BUILD" ] || { echo "skip $ARCH (no build dir)"; continue; }
 
-  # The public headers are copied from the FFmpeg source tree. Bail out before
-  # touching $INC if that tree is gone, otherwise the include directory would
-  # be wiped and left empty.
-  if [ ! -d "$FFMPEG_SRC_DIR/libavutil" ]; then
-    echo "FFmpeg source tree not found: $FFMPEG_SRC_DIR" >&2
-    echo "Re-extract the FFmpeg 7.1.1 source before staging." >&2
-    exit 1
-  fi
-
-  # Headers: the public API of every enabled component plus the generated
-  # config headers that the build produced.
-  rm -rf "$INC"
-  mkdir -p "$INC"
-  cp "$BUILD/config.h" "$INC/"
-  for L in libavutil libavcodec libavformat libavfilter libswscale libswresample; do
-    mkdir -p "$INC/$L"
-    cp "$FFMPEG_SRC_DIR/$L"/*.h "$INC/$L/"
-  done
-  cp "$BUILD/libavutil/avconfig.h" "$INC/libavutil/"
-  cp "$BUILD/libavutil/ffversion.h" "$INC/libavutil/"
-  echo "$ARCH headers: $(find "$INC" -name '*.h' | wc -l)"
-
-  # Shared libraries.
   case "$ARCH" in
     x86_64)  ABI=x86_64 ;;
     aarch64) ABI=arm64-v8a ;;
     *) echo "unknown arch mapping: $ARCH"; exit 1 ;;
   esac
+
+  # Headers that encode the architecture. config.h and libavutil/avconfig.h
+  # differ between x86_64 and aarch64, so they live in an ABI overlay
+  # directory that the CMake include path picks up first; see
+  # harmony-app/entry/src/main/cpp/CMakeLists.txt.
+  mkdir -p "$INC/$ABI/libavutil"
+  cp "$BUILD/config.h" "$INC/$ABI/"
+  cp "$BUILD/libavutil/avconfig.h" "$INC/$ABI/libavutil/"
+  cp "$BUILD/libavutil/ffversion.h" "$INC/$ABI/libavutil/"
+  echo "$ABI headers: $(find "$INC/$ABI" -name '*.h' | wc -l)"
+
+  # Shared libraries.
   mkdir -p "$LIBS/$ABI"
   for L in avutil avcodec avformat avfilter swscale swresample; do
     if [ -f "$BUILD/lib$L/lib$L.so" ]; then
