@@ -97,3 +97,38 @@
   `cygpath -w` 转换。这个开关是全局的，关掉后 `compare-gif.sh` 调
   `ffmpeg.exe` 也会拿不到路径，所以必须按命令作用域设置。
   详见 `docs/harmonyos-pc-port-architecture.md` §10.5 #22。
+
+### 鸿蒙图片类页面：走 ImageKit，不走 ArkUI Canvas
+
+- C5 图片裁剪 / C6 图标生成 / C7 图片转黑白三张页**零新增 C++**，共用同一套
+  基础设施：`common/ImageIo.ets`（ImageKit 解码与缩放 + 像素运算 + 文件读写）、
+  `common/Png.ets`（PNG 色型 2/6，压缩复用原生 `zlibDeflate`）。
+- **不要用 ArkUI Canvas 2D 搬像素** —— PC/2in1 上整幅 `getImageData` 不可信
+  （v1.1 的 P5 只验证了单点读写）。改用
+  `image.createImageSource()` → `createPixelMap({desiredPixelFormat: RGBA_8888})`
+  → `readPixelsToBuffer()`，得到的是**行填充（stride）**且可能是 **PREMUL** 的
+  数据，`ImageIo.ets` 里已统一归一成紧凑的直通 alpha RGBA。
+- **ImageKit 的 `desiredSize` 是强制拉伸到目标尺寸、不保比例**。`cover`（填满并
+  居中裁）/ `safe`（缩进中央安全区）两种适配必须自己算出保持比例的目标尺寸，
+  否则图标会被拉变形。
+- **ImageKit 的 JPEG 打包器不支持 alpha**，透明像素会被按黑色写出 —— 走 JPG
+  前先用 `flattenRgba()` 按背景色压平。
+- 缩放重采样用**预乘 alpha 上的双线性**（`drawScaledRgba`），与浏览器 canvas
+  的结果构图一致、边缘锐度略有差别，这是刻意取舍。
+- 详细踩坑见 `docs/harmonyos-pc-port-architecture.md` §10.5 #25–#30、§10.12。
+
+### ArkUI 写页面的高频坑（本项目已踩）
+
+- `@State` 变量名**不能与 `CommonAttribute` 的方法同名**：`width` / `height` /
+  `scale` / `background` 都是方法名。本项目用 `zoom`（缩放）、`outWidth` /
+  `outHeight`、`bgColor`。
+- `Scroll` 默认对齐是 `Alignment.Center`，内容比视口矮时会整体沉到窗口中部
+  → 必须显式 `.align(Alignment.TopStart)`。
+- `SelectOption.value` 的类型是 `ResourceStr`，`ForEach` 的 key 生成器要返回
+  `string` → 用 `option.value.toString()`。`Select` 必须显式 `.value(...)` 才
+  显示当前项。
+- `PinchGesture` 的回调要标成 `PinchGestureEvent`（`GestureEvent` 基类上没有
+  `focalPoint`），焦点坐标取 `pinchCenterX` / `pinchCenterY`。
+- 2in1 模拟器**没有可用 IME**：`uitest uiInput text` 打不进 `TextInput`
+  （按键事件如 Backspace 却能生效）。自动化验证走按钮路径，别把交互验证押在
+  文本输入上。

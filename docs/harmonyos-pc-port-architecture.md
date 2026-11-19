@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.5（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备）
+> 版本：v1.6（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测）
 > 日期：2026-11-19
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）**，详见 §10 验证报告
 
 ---
 
@@ -95,6 +95,23 @@ v1.5 只做一件事：**把 R-13「未在 aarch64 真机上实跑」闭合掉**
 | M4-d | **真机复跑脚本** | 无 | ✅ **新增**：`tools/run-ohos-device-check.sh` 一条命令完成「装包 → 拉起 → 点开自检 → 收探针日志 → 拉产物 → 与 Windows 黄金件对拍」，已在 2in1 模拟器上端到端实测 |
 | M4-e | **aarch64 真机实跑** | ⬜ 开放（R-13） | 🟡 **构建侧已就绪，待设备**：双 ABI HAP 已产出、arm64 库 ELF 校验为 `0xB7`（AArch64）、复跑脚本已验证；本轮收尾时真机（MatePad Mini）已从 USB 总线离线，需重新插线后执行那条命令 |
 
+### 0.6 v1.6 图片侧四页移植实测（C5 / C6 / C7 + 设置页）
+
+v1.6 把 **C5 图片裁剪、C6 图标生成、C7 图片转黑白** 与设置页搬进鸿蒙侧，并定下三张图片页的共同技术路线：**全部在 ArkTS 层实现，零新增 C++**。
+
+| # | 验证项 | v1.5 状态 | **v1.6 实测结论** |
+|---|---|---|---|
+| M5-a | **承载路线重选** | 计划用 ArkUI Canvas 2D | ✅ **路线改写（新增 R-20）**：ImageKit（`@kit.ImageKit`）负责解码与缩放，像素运算放 ArkTS，PNG 编码复用原生 `zlibDeflate`。**不依赖 Canvas**，理由见 §10.12.1 |
+| M5-b | **C7 图片转黑白** | 未实现 | ✅ **通过**：`mono1bpp.ts` 逐行移植为 `Mono1bpp.ets`；设备产出 `media_studio_mono.bmp` **15,662 B**（= 62 + 52×300，与 400×300 的 1-bit BMP 理论值精确吻合） |
+| M5-c | **C6 图标生成** | 未实现 | ✅ **通过**：Android **20 个文件**（17 PNG + 3 配置）、iOS **15 个**（13 PNG + 2 配置）、HarmonyOS **6 个**（4 PNG + 2 配置）全部产出；PNG 头逐个核验尺寸/色型，**扁平图一律 RGB（无 alpha）**、透明图一律 RGBA |
+| M5-d | **C6 cover/safe 几何** | 未实现 | ✅ **通过**：前景层内容**全部落在画布中央 2/3 安全区内**（越界像素 0）；背景层与主机 ffmpeg 参考图**平均绝对差 1.92**（同一几何、不同重采样核） |
+| M5-e | **C5 图片裁剪** | 未实现 | ✅ **通过**：默认画布（400×300 贴合原图）裁剪结果与原图**解码后逐字节 0 差异**；放大 125% 后与 ffmpeg 参考图**平均绝对差 2.33** |
+| M5-f | **C5 输出格式** | 只有 PNG | ✅ **通过**：PNG（自研编码器）、JPG（`image/jpeg`）、WebP（`image/webp`）三档实测均产出 400×300 正确尺寸（新增 R-21：JPG 必须先压平，ImageKit 的 JPEG 打包器会把透明像素变黑） |
+| M5-g | **C5 交互** | — | ✅ **通过**：拖拽平移、双指缩放（锚点保持）、⊕/⊖/适应 三种缩放入口、三分线 + 遮罩 + 蓝色裁剪框的 WYSIWYG 预览全部正常 |
+| M5-h | **ImageKit 缩放语义** | — | ⚠️ **已澄清（新增 R-22）**：`desiredSize` 是**强制拉伸到目标尺寸、不保比例**；`cover`/`safe` 必须自己算目标尺寸，否则图标会被拉变形 |
+
+> **v1.6 的真正收获不在"又多了三页"**，而在于**一次把三张图片页的承载路线钉死了**：ArkUI Canvas 2D 在 PC 端并不可靠，而「ImageKit 解码 + ArkTS 像素运算 + 原生 zlib 编码」这条链路已经在 Mono / Icons / Crop 三张页上各跑通一次，且**三张页共用同一组基础设施**（`ImageIo.ets` / `Png.ets`）。后续再有图片类页面，**零新增底层代码**。
+
 ---
 
 ## 1. 现状盘点（代码级）
@@ -140,6 +157,8 @@ sdk/                  独立 C++ SDK（1229 行），C ABI（media_studio.h）
 - **纯搬运（几乎零改动）**：C7、C8、C4，以及 C5/C6 中的几何与规格表（`cropMath.ts` 153 行、`appicons.ts` 262 行）。
 - **必须重写载体、保留算法**：C1、C2、C3 的滤镜表达式（`mask_builder.cpp` 生成的 `if(...)`/`geq` 字符串、`video_crop.ts` 的 crop→scale→pad 三段链）——**这是本方案保真度的核心资产，不应改写成 API 调用**。
 - **必须换平台实现**：C5、C6、C9、C10。
+
+> **v1.6 修订**：C5 / C6 / C7 三张图片页的「换 ArkUI Canvas」结论已被实测推翻，改走 **ImageKit + ArkTS 像素运算 + 原生 zlib**（R-20，见 §10.12.1）。C5/C6 的**算法部分（几何、规格表、缩放适配）仍是纯搬运**，换掉的只是像素搬运与编码的载体。
 
 ### 1.3 现状的三个硬约束（移植时必须正面处理）
 
@@ -802,6 +821,9 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | **R-17** | **C3 裁剪没有 H.264 输出**（OHOS 精简构建 `CONFIG_LIBX264 0` / `CONFIG_LIBOPENH264 0`） | 中 | 高 | 当前交付 **MJPEG + AVI**；升级路径：(a) 交叉编译 libopenh264；(b) 构建脚本加 `--enable-encoder=mpeg4` 后重建双架构 | 🟡 **新增，M3 以 MJPEG/AVI 交付**（见 §10.10.3） |
 | **R-18** | **滤镜图提前结束时被误判为失败**（`trim`/`select` 到达窗口末尾后拒绝再收帧，`av_buffersrc_add_frame_flags()` 返回 `AVERROR_EOF` 被当成硬错误） | 中 | 中 | 把 `AVERROR_EOF` 当作 EOF 处理：跳出送帧循环 + 发 EOF 标记 + 排空 sink（见 §10.5 #18、§10.10.5） | ✅ **新增并已解决**（v1.4） |
 | **R-19** | **双 ABI 共用一份 FFmpeg 头文件**（`config.h` / `avconfig.h` 是**按架构生成**的，共用会让 arm64 编译静默使用 x86_64 的 SIMD 特性宏） | 中 | 中 | 把按架构的头文件放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径、覆盖层缺失即 `FATAL_ERROR`；`stage-ffmpeg-ohos.sh` 按 ABI 产出（见 §10.11.1） | ✅ **新增并已解决**（v1.5） |
+| **R-20** | **ArkUI Canvas 2D 撑不起图片类页面**（v1.1 只验证了单点像素读写，整幅像素搬运在 PC 端不可信） | 中 | — | 放弃 Canvas 路线，改用 **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码**，三张图片页共用同一套基础设施（见 §10.12.1） | ✅ **新增并已解决**（v1.6） |
+| **R-21** | **ImageKit 的 JPEG 打包器不支持 alpha**（透明像素会被按黑色写出） | 中 | 高 | 走 JPG 前先用 `flattenRgba()` 按背景色压平；WebP/PNG 保留 alpha（见 §10.5 #27） | ✅ **新增并已解决**（v1.6） |
+| **R-22** | **ImageKit 的 `desiredSize` 强制拉伸到目标尺寸、不保比例**（直接传目标尺寸会把图标拉变形） | 中 | 中 | `cover` / `safe` 两种适配各自算出**保持比例**的目标尺寸再交给 ImageKit（见 §10.5 #26、§10.12.3） | ✅ **新增并已解决**（v1.6） |
 
 ---
 
@@ -1007,6 +1029,12 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 22 | Git Bash 里 `hdc file recv /data/local/tmp/x.json <本地路径>` 报 `no such file or directory, path:D:/ProgramFiles/Git/data/local/tmp/x.json` | **MSYS 的参数路径转换**：把「长得像 POSIX 绝对路径」的参数改写成 Windows 路径；**设备端路径** `/data/...` 也被误改写 | 只对 hdc 关闭转换（`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`），**主机端路径改用 `cygpath -w` 显式转换**；注意这个开关是全局的，关掉后 `compare-gif.sh` 调 `ffmpeg.exe` 也会拿不到路径，所以必须按命令作用域设置 |
 | 23 | 双 ABI 构建时 arm64 可能静默使用 x86_64 的 FFmpeg 特性宏 | `config.h` / `libavutil/avconfig.h` 是**按架构生成**的；两份 `config.h` 有 166 行差异（全是 SIMD/汇编特性宏） | 按 ABI 放进 `include/<abi>/` 覆盖层并让 CMake 用 `${OHOS_ARCH}` 选路径（覆盖层在前），缺失即 `FATAL_ERROR`；`stage-ffmpeg-ohos.sh` 改为按 ABI 产出（见 §10.11.1） |
 | 24 | 模拟器 `hdc list targets` 里出现的实例是 `phone`，应用却报 `device type is not supported` | 本机同时跑着 **Mate 90 Pro（phone）** 与 **MateBook Pro（2in1）** 两个实例，前者占用了 5555；应用的 `deviceTypes` 只有 `2in1`/`tablet` | 按实例名启动目标模拟器并用 `param get const.product.devicetype` 确认；本机 5557 上的 MateBook Pro 才是 `2in1` |
+| 25 | 图片类页面用 ArkUI `Canvas` 2D 不可靠（`getImageData` 读回的像素不可信） | ArkUI Canvas 在 PC/2in1 上的实现与手机端不同，v1.1 的 P5 探针只验证了**单点读写**，没验证整幅像素搬运 | **新增 R-20**：放弃 Canvas 路线，改用 **ImageKit 解码/缩放 + ArkTS 直接做像素运算 + 原生 `zlibDeflate` 编码**；三张图片页共用这套基础设施 |
+| 26 | 生成的图标被拉变形（宽高比例被破坏） | ImageKit 的 `desiredSize` 是**强制拉伸到目标尺寸**，不保持宽高比 | `cover` / `safe` 两种适配各自算出保持比例的目标尺寸再交给 ImageKit（R-22） |
+| 27 | JPG 输出里透明区域变成黑色 | ImageKit 的 JPEG 打包器**不支持 alpha 通道**，透明像素按黑处理 | 走 JPG 前先用 `flattenRgba()` 按背景色压平（R-21） |
+| 28 | `uitest uiInput text 200` 打不进 ArkUI `TextInput`（模拟器上没有 IME） | 2in1 模拟器没有可用输入法，**文本合成通道不通**；但按键事件（Backspace）能生效 | 自动化验证改走**按钮路径**；`tools/run-ohos-device-check.sh` 不依赖任何文本输入，真机复跑不受影响 |
+| 29 | ArkTS 编译报 `Property 'focalPoint' does not exist on type 'GestureEvent'` | `focalPoint` 定义在 `PinchGestureEvent` 上，`GestureEvent` 基类没有该字段 | 双指缩放的回调标注成 `PinchGestureEvent`，取 `pinchCenterX` / `pinchCenterY`（同为相对组件原点的 vp 坐标） |
+| 30 | ArkTS 编译报 `Argument of type '(option: SelectOption) => ResourceStr' is not assignable to parameter of type '(item: any, index: number) => string'` | `SelectOption.value` 的类型是 `ResourceStr`（`string \| Resource`），而 `ForEach` 的 key 生成器必须返回 `string` | key 生成器写 `option.value.toString()` |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -1341,6 +1369,87 @@ tools/run-ohos-device-check.sh 5KPBB25925200823   # 指定设备
 
 **待办**：真机（`5KPBB25925200823`，HUAWEI MatePad Mini，HarmonyOS API 26 / tablet / aarch64）在本轮收尾时已从 USB 总线离线（`hdc list targets` 中消失，PnP 里也没有 ADB 接口），需重新插线并接受「允许 USB 调试」后执行上面那条命令。
 
+### 10.12 图片侧四页移植实测（v1.6 新增）
+
+#### 10.12.1 承载路线：为什么最终没有走 ArkUI Canvas
+
+v1.1 的方案里，C5/C6/C7 三张图片页都规划成「换 ArkUI Canvas 2D」。实际实现时这条路被放弃了，原因有三条：
+
+| 维度 | ArkUI Canvas 2D（规划） | ImageKit + ArkTS（实际） |
+|---|---|---|
+| 像素读取 | `getImageData` 逐行取 `Uint8ClampedArray` | `pixelMap.readPixelsToBuffer()` 直接拿 `ArrayBuffer` |
+| 缩放 | Canvas 自己缩放（结果不可控） | **自己算目标尺寸**再交给 ImageKit（§10.12.4） |
+| PNG 编码 | 仍是 `CompressionStream` 等价物的问题 | 复用原生 `zlibDeflate`（C8 本来就要下沉原生） |
+| 新增 C++ | 0 | **0**（三张页共用同一套基础设施） |
+| 整幅像素搬运 | 依赖 Canvas 在 PC 端的实现 | 纯 `Uint8Array`，行为确定 |
+
+v1.1 的 P5 探针只验证了 Canvas 的**单点** `getImageData`/`putImageData` 读写正确，没有验证整幅像素搬运；到真要实现「图标批量生成」时才发现 Canvas 这条路在 PC 端拿不到可信的整幅像素。于是改为 **R-20：ImageKit 负责解码与缩放，像素运算全部在 ArkTS 里做**。
+
+新增/复用的基础设施（`harmony-app/entry/src/main/ets/common/`）：
+
+| 文件 | 职责 | 来源 |
+|---|---|---|
+| `ImageIo.ets` | ImageKit 解码（含 stride 行填充与 PREMUL→UNPREMUL 归一）、按目标尺寸缩放、`cropRgba` / `composeRgba` / `flattenRgba` / `drawScaledRgba`、文件读写、JPEG/WebP 打包 | **本轮新建** |
+| `Png.ets` | PNG 编码器，色型 2（RGB，无 alpha）与色型 6（RGBA） | 本轮新建（C8 的下沉原生版） |
+| `Mono1bpp.ets` | 1-bit 二值化 / BMP / Img2Lcd C 数组 | `mono1bpp.ts` 逐行移植 |
+| `AppIcons.ets` | Android / iOS / HarmonyOS 三套输出计划（纯数据 + 文本） | `appicons.ts` 逐行移植 |
+| `CropMath.ets` | 变换模型（`scale` = 画布像素/源像素）、`zoomAt` 锚点缩放、`fitTransform` | `cropMath.ts` 逐行移植 |
+
+**Windows 侧零改动**：`electron-app/` 本轮只被读取，未做任何修改。
+
+#### 10.12.2 C7 图片转黑白（对应 Windows `pages/Mono.tsx`）
+
+设备端（2in1 模拟器）实测：选图 → 解码 → 二值化 → BMP 写出全通。
+
+| 项 | 实测 |
+|---|---|
+| 产出 | `media_studio_mono.bmp` **15,662 B** |
+| 理论值 | 1-bit BMP：62 B 文件头 + 52 B 行表 + 52 B/行 × 300 行 = **15,662 B**（**精确吻合**） |
+| 状态行 | `BMP 已更新: 400 x 300, 15.3 KB` |
+| C 数组 / BIN | 同一页可导出 Img2Lcd 兼容的 `.c` 与 `.bin` |
+
+#### 10.12.3 C6 图标生成（对应 Windows `pages/Icons.tsx`）
+
+输入 `photo.png`（400×300），三个平台各生成一套：
+
+| 平台 | 文件数 | 内容 |
+|---|---|---|
+| Android | **20** | 17 PNG（Play 512 / 华为市场 216 / mipmap 五密度传统图标 / 五密度自适应前景+背景层）+ 2 个自适应声明 XML + README.txt |
+| iOS | **15** | 13 个官方尺寸 PNG + `Contents.json` + README.txt |
+| HarmonyOS | **6** | `media/foreground.png` + `media/background.png` + `media/layered_image.json` + `agc-store-216.png` + `agc-store-1024.png` + README.txt |
+
+产物（41 个文件）全部拉回主机核验：
+
+| 核验项 | 方法 | 结果 |
+|---|---|---|
+| PNG 签名与尺寸 | 读 IHDR | 41/41 签名正确，**全部正方形**，尺寸与计划逐一相符 |
+| **扁平图无 alpha** | 读 IHDR 色型 | `huawei-market-216` / 五个 `ic_launcher_background` / `icon-*` / `background.png` / `agc-store-*` 全为**色型 2（RGB，无 alpha 通道）** —— 满足 App Store Connect 的 ITMS-90717 与鸿蒙「背景层不允许透明」 |
+| 透明图保留 alpha | 同上 | `playstore-512` / `ic_launcher` / `ic_launcher_foreground` / `media/foreground.png` 全为**色型 6（RGBA）** |
+| **前景层安全区** | 解码统计 alpha | 内容包围盒 `[170,256]..[852,767]`，**越出画布中央 2/3 安全区的像素 = 0** |
+| **背景层不透明** | 解码统计 alpha | 非不透明像素 = **0** |
+| **cover 几何正确性** | 与主机 ffmpeg 参考图对拍 | 参考 `scale=1365:1024,crop=1024:1024:170:0`，**平均绝对差 1.92**、最大 136（差异来自重采样核：ImageKit vs swscale），几何完全一致 |
+| 扁平图一致性 | 逐字节比对 | `agc-store-1024.png` 与 `iOS/icon-1024.png` 与 `media/background.png` **互相逐字节 0 差异**（同一次 cover+flatten 的产物） |
+| 预览圆形蒙版 | 解码统计 alpha | 四角 alpha = 0、中心 = 255，不透明像素占比 **0.667** ≈ π·0.46² = 0.665 —— 圆形蒙版生效 |
+| 配置文件 | 读文本 | `media/layered_image.json` 与 `Contents.json` 与 Windows 版 `JSON.stringify(..., null, 2)` 输出一致 |
+
+#### 10.12.4 C5 图片裁剪（对应 Windows `pages/Crop.tsx`）
+
+| 项 | 实测 |
+|---|---|
+| 交互 | 拖拽平移、双指缩放（**锚点保持**：缩放时焦点处的画面点不动）、⊕ / ⊖ / 适应 三种缩放入口全部正常 |
+| WYSIWYG 预览 | 蓝色裁剪框 + 三分线 + 框外遮罩（`rgba(8,12,18,0.62)`）全部渲染正常 |
+| **默认画布裁剪** | 400×300 源图贴合 400×300 画布（变换为恒等）→ 产出 `photo_crop_400x300.png`，**解码后与原图逐字节 0 差异**（480,000 字节） |
+| **带缩放的裁剪** | 点 ⊕（125%）后裁剪 → 与主机 ffmpeg 参考 `scale=500:375,crop=400:300:50:38` **平均绝对差 2.33**、最大 75，几何一致 |
+| 输出格式 | PNG（自研编码器，rgb24）/ JPG（`image/jpeg`，yuvj420p）/ WebP（`image/webp`，yuv420p）**三档均产出 400×300 正确尺寸** |
+| 体积 | PNG 76,752 B / JPG 18,195 B / WebP 11,126 B |
+
+#### 10.12.5 已知差异与遗留
+
+1. **重采样核不同**：Windows 用浏览器 Canvas 的高质量缩放，本移植用 ArkTS 的**双线性（预乘 alpha 上做）**。构图、几何、alpha 合成结果一致，边缘锐度略有差别。这是刻意的取舍：Canvas 路线在 PC 端拿不到可信的整幅像素（§10.12.1）。
+2. **C6 背景层沿用 Windows 的行为**：`background.png` / `ic_launcher_background.png` 是「cover 适配后按背景色压平」的**图像**，而不是纯色块 —— 这是 Windows 版 `renderJob()` 的既有行为（注释里写「纯色」但代码是先填底色再画图），本移植按原样保真。**若要改成审核语义上的纯色背景层，只需把 `harmonyPlan()` / `androidPlan()` 里背景层的 `fit` 从 `'cover'` 改成输出纯色，Windows 侧不动。**
+3. **模拟器无法验证文本输入**：`uitest uiInput text` 在本机 2in1 模拟器上打不进 ArkUI `TextInput`（无 IME，见 §10.5 #28）。C5 的**宽/高数值输入**因此只验证了「加载时正确回填 400/300」与「非数字时报错」两条路径，**手输任意宽高的路径未在设备上跑过**（逻辑与 Mono 页共用同一套 `parseInt` + 范围校验写法）。
+4. **C5 不支持自由比例预设与「预计大小」实时估算**：Windows 版图片裁剪页也没有比例预设（那是视频裁剪页的能力），但 Windows 版有基于真实编码的体积估算；本移植只在裁剪后给出实际体积，实时估算因每次都要整幅编码而放弃。
+
 ---
 
 ## 附录 A：能力搬运映射表（逐文件）
@@ -1386,3 +1495,4 @@ tools/run-ohos-device-check.sh 5KPBB25925200823   # 指定设备
 | v1.3 | 2026-11-19 | **完成 M2 抠像引擎移植实测**：新增 `sdk/src/engine/ms_keying.{h,cpp}` 并原样复用 `mask_builder.cpp`；执行器支持「一个源喂多个 buffersrc」（复刻 CLI 的重复 `[0:v]` 语义）；**修正输出时基兜底策略**（新增 R-16：帧率未知时改回退到图输出时基 + 沿链回溯补回 `setpts` 抹掉的帧率，修掉 `non monotonically increasing dts`）；P10 探针在 2in1 上产出 GIF，与 Windows 黄金件 **rgba 逐字节 0 差异**（4,608,000 B）且**逐帧节奏一致**；新增 §10.9；踩坑速查增至 17 条 |
 | v1.4 | 2026-11-19 | **完成 M3 应用界面与 C3 裁剪引擎实测**：`harmony-app/` 从单页探针变成完整应用（首页 + 视频转GIF + GIF抠图 + 视频裁剪 + 自检），新增生产 NAPI 接口 `media_api.cpp`（`napi_async_work` + 线程安全函数，Promise + 进度回调）；新增 C3 引擎 `sdk/src/engine/ms_crop.{h,cpp}`（Windows `buildFilterChain()` 的逐行移植）与 `decodeFirstFrame()`（裁剪页 WYSIWYG 预览帧来源）；**修正滤镜图提前结束被误判为失败**（新增 R-18：把 `av_buffersrc_add_frame_flags()` 的 `AVERROR_EOF` 当作 EOF）；**V5 闭环**（系统文件选择器实测通过，`.mp4` 过滤生效）；经真实界面「选文件 → 开始抠图」产出的 GIF 与 Windows 黄金件 **rgb24 3,456,000 字节 0 差异**；新增 R-17（C3 暂以 MJPEG/AVI 交付，OHOS 侧无 H.264 编码器）；新增 §10.10；踩坑速查增至 21 条 |
 | v1.5 | 2026-11-19 | **双 ABI 构建与 aarch64 真机复跑准备（R-13 收口中）**：`abiFilters` 由 `["x86_64"]` 改为 `["arm64-v8a","x86_64"]`，一次构建产出双 ABI HAP（33,707,919 B，含两套 ffmpeg 库，arm64 ELF=`0xB7`）；**按 ABI 隔离 FFmpeg 头文件**（新增 R-19：`config.h` / `libavutil/avconfig.h` 放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径、缺失即 `FATAL_ERROR`，`stage-ffmpeg-ohos.sh` 改为按 ABI 产出）；实测澄清「aarch64 侧 `ARCH_AARCH64` 也是 0」（`--disable-asm` 所致），真正分叉的只是 SIMD 特性宏；**x86_64 回归全绿**：P1–P15 通过，产物字节数与 v1.2/v1.3 基线逐字节一致，与 Windows 黄金件 **rgb24 3,456,000 与 22,118,400 字节 0 差异**；新增 `tools/run-ohos-device-check.sh`（装包→拉起→点开自检→收日志→拉产物→对拍）并在 2in1 模拟器上端到端实测；新增 §0.5 / §10.11；踩坑速查增至 24 条 |
+| v1.6 | 2026-11-19 | **图片侧四页移植（C5 / C6 / C7 + 设置页）**：定下三张图片页的共同路线 —— **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码，零新增 C++**（新增 R-20，放弃 ArkUI Canvas 路线）；新增 `common/ImageIo.ets`（ImageKit 解码含 stride 填充与 PREMUL→UNPREMUL 归一、`cropRgba`/`composeRgba`/`flattenRgba`/`drawScaledRgba`、JPEG/WebP 打包）、`common/Png.ets`（色型 2/6）、`common/Mono1bpp.ets`、`common/AppIcons.ets`、`common/CropMath.ets`（后三者为 Windows 侧 `mono1bpp.ts` / `appicons.ts` / `cropMath.ts` 的逐行移植）与 `pages/Mono.ets`、`pages/Icons.ets`、`pages/Crop.ets`、`pages/Settings.ets`；**2in1 实测**：C7 产出 1-bit BMP 15,662 B（与理论值精确吻合）；C6 三平台共 **41 个文件**，前景层内容越出中央 2/3 安全区的像素 = 0，扁平图一律 RGB 无 alpha，背景层与主机 ffmpeg 参考图平均绝对差 1.92；C5 默认画布裁剪与原图**逐字节 0 差异**，放大 125% 后与 ffmpeg 参考平均绝对差 2.33，PNG/JPG/WebP 三档格式均产出正确尺寸；新增 R-21（JPEG 打包器把透明变黑 → 先压平）、R-22（`desiredSize` 强制拉伸 → 自己算目标尺寸）；新增 §0.6 / §10.12；踩坑速查增至 30 条 |
