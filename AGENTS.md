@@ -52,3 +52,19 @@
 - 应用日志：`%TEMP%\media-studio.log`。
 - 提交遵循 conventional commits（feat/fix/chore/build），不强推，
   远端 https://github.com/KingGunFish/MediaStudio 。
+
+### 鸿蒙移植的两端 ffmpeg 不是同一个版本
+
+- 宿主（Windows 黄金件的来源）：`electron-app/resources/sdk/ffmpeg.exe` =
+  nightly `N-126303-g9f35e220ff-20260827`（libavcodec 63.8.101）。
+- 鸿蒙侧：`tools/build-ffmpeg-ohos.sh` 固定 **FFmpeg 7.1.1**。
+- **已确认的语义差异**：`setpts` 在 7.1.1 会把输出链接的帧率标成未知
+  （`libavfilter/setpts.c: config_output_video` → `{1,0}`），nightly 则**保留**
+  输入帧率。凡是滤镜链末端带 `setpts=PTS-STARTPTS`（C1 的 ping-pong 段、
+  C2 抠像链）都会命中，表现为图输出帧率 `1/0`。
+- 处理方式在 `sdk/src/engine/ms_inproc_exec.cpp` 的 `effective_output_rate()`：
+  沿链回溯到最近一个仍带帧率的链接。**改这条兜底逻辑前先读
+  `docs/harmonyos-pc-port-architecture.md` §10.9**（含完整根因链与踩坑）。
+- 验收口径是**解码后逐字节比对**（`tools/compare-gif.sh`），不是压缩流字节：
+  两端 GIF 字节必然不同（调色板透明槽位索引、palettegen 落点都不同），
+  但 rgba 画面逐字节一致即算通过。
