@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.4（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测）
+> 版本：v1.5（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备）
 > 日期：2026-11-19
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）**，详见 §10 验证报告
 
 ---
 
@@ -82,6 +82,18 @@ M3 = 把 `harmony-app/` 从「只有一页探针」变成**真正的应用**（�
 | M3-h | 滤镜图提前结束时被误判为失败 | 未暴露 | ✅ **已修复**（新增 R-18）：`trim` 等滤镜到窗口末尾后拒绝再收帧，`av_buffersrc_add_frame_flags()` 返回 `AVERROR_EOF` 被当成硬错误 |
 
 > **M3 暴露的第二个引擎级缺陷（R-18）同样是"沉默"的**：执行器把滤镜图正常的结束信号当成了失败，首帧解码因此报 `End of file`。这类缺陷只有在**引擎开始复用既有滤镜**（C1/C2 自己不裁窗口）时才会显形 —— 与 R-16 同属「里程碑推进才会暴露」的一类。
+
+### 0.5 v1.5 双 ABI 构建与 aarch64 真机复跑（进行中）
+
+v1.5 只做一件事：**把 R-13「未在 aarch64 真机上实跑」闭合掉**。为此先把工程从「只编 x86_64」改成「一次构建产出 arm64-v8a + x86_64 双 ABI」，再把真机复跑固化成一条可重复执行的命令。
+
+| # | 验证项 | v1.4 状态 | **v1.5 实测结论** |
+|---|---|---|---|
+| M4-a | **双 ABI 一次构建** | 只编 x86_64 | ✅ **通过**：`abiFilters` 改为 `["arm64-v8a","x86_64"]`，同一个 HAP 内含 `libs/arm64-v8a/` 与 `libs/x86_64/` 两套 ffmpeg 库 |
+| M4-b | **按 ABI 隔离的 ffmpeg 头文件** | 全工程共用一份 `config.h`（x86_64 版） | ✅ **已解决**（新增 R-19）：`config.h` / `libavutil/avconfig.h` 按 ABI 放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径，覆盖层缺失直接 `FATAL_ERROR` |
+| M4-c | **x86_64 回归**（证明改造没破坏已验证路径） | — | ✅ **通过**：P1–P15 全绿，`out.gif` 483,220 B / `out_rot90.gif` 694,719 B / `out_key.gif` 12,069 B 与 v1.2/v1.3 基线**逐字节一致**；与 Windows 黄金件 **rgb24 3,456,000 与 22,118,400 字节 0 差异** |
+| M4-d | **真机复跑脚本** | 无 | ✅ **新增**：`tools/run-ohos-device-check.sh` 一条命令完成「装包 → 拉起 → 点开自检 → 收探针日志 → 拉产物 → 与 Windows 黄金件对拍」，已在 2in1 模拟器上端到端实测 |
+| M4-e | **aarch64 真机实跑** | ⬜ 开放（R-13） | 🟡 **构建侧已就绪，待设备**：双 ABI HAP 已产出、arm64 库 ELF 校验为 `0xB7`（AArch64）、复跑脚本已验证；本轮收尾时真机（MatePad Mini）已从 USB 总线离线，需重新插线后执行那条命令 |
 
 ---
 
@@ -748,7 +760,7 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 
 | 阶段 | 内容 | 产出 | 估算 | **v1.4 状态** |
 |---|---|---|---|---|
-| **M0 可行性验证** | 最小鸿蒙工程；ffmpeg OHOS 最小构建；NAPI 冒烟转 GIF | `libmedia_studio.so`、`build-ffmpeg-ohos.sh`、冒烟 Demo | 2–3 人日 | ✅ **已完成**：ffmpeg 交叉编译 ✅、NAPI ✅、子进程 ✅、Canvas ✅、zlib ✅、真 GIF 编码端到端 ✅；**aarch64 真机复跑仍待做（R-13）** |
+| **M0 可行性验证** | 最小鸿蒙工程；ffmpeg OHOS 最小构建；NAPI 冒烟转 GIF | `libmedia_studio.so`、`build-ffmpeg-ohos.sh`、冒烟 Demo | 2–3 人日 | ✅ **已完成**：ffmpeg 交叉编译 ✅、NAPI ✅、子进程 ✅、Canvas ✅、zlib ✅、真 GIF 编码端到端 ✅；**aarch64 真机复跑仍待做（R-13）——v1.5 已把构建侧就绪（双 ABI HAP + 复跑脚本），待真机重新连上** |
 | **M1 引擎移植** | 进程内 CLI 子集执行器 + 探针 + 单帧解码 + 任务表/取消 | C1/C2/C3/C4 全部可用 | 9–12 人日 | 🟡 **C1/C2/C3/C4 均已跑通端到端**（§10.8/§10.9/§10.10）；**任务表/取消**（进度已通，取消未做） |
 | **M2 UI 重写** | 7 页面 + 4 lib 翻译 + Canvas 封装 + 拖拽 | 功能对齐 Windows 版 | 15–20 人日 | 🟡 **已完成 4 个主页面**（首页/视频转GIF/GIF抠图/视频裁剪）+ 自检页；**图片裁剪、图片转黑白、图标生成、设置尚未开工**；拖拽导入未做（R-08/V6） |
 | **M3 打磨与上架** | 进度/取消、错误提示、体积裁剪、签名、上架材料 | 可发布 HAP | 5–8 人日 | ⬜ 未开始：进度 ✅、错误提示 ✅；**取消、体积裁剪、签名、上架材料**待做 |
@@ -783,12 +795,13 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | R-10 | ArkTS 静态类型约束导致 UI 重写量超预期 | 中 | 中 | 先做 Crop（最复杂）页面做样本，校正估算 | 🟡 **部分闭环**（v1.4）：Crop 页面已按 ArkUI 重写并跑通；代价是 `@State` 变量不能与 `CommonAttribute` 的方法同名（`width`/`height`/`scale`/`background`），需改名（见 §10.5 #19） |
 | R-11 | `sdk/` 双端共享导致 Windows 版回归 | 中 | 中 | 鸿蒙改动全部新增在 `sdk/src/engine/`，不触碰 Windows 路径；CI 跑 Windows 冒烟 | ⬜ 开放 |
 | **R-12** | **PNG 编码依赖 `@ohos.zlib` 的假设被推翻** | 中 | — | 已改为原生 `compress2()`（实测 `78 9C`），`pngrgb.ts` 保留，仅替换一处调用 | ✅ **已关闭**（v1.1 新增并解决） |
-| **R-13** | **未在 aarch64 真机上实跑**（仅 2in1 模拟器 x86_64） | 高 | — | aarch64 目标已交叉编译成功并校验 ELF（AArch64），但**未在真机安装运行**；M0.5 阶段复跑同一套探针 | ⬜ **新增，上架前必做** |
-| **R-14** | **aarch64 的 NEON 汇编在 Windows 宿主上不可用**（`--disable-asm` 构建） | 中 | 中 | 生产构建改用 Linux 宿主（WSL + Linux 版 OHOS NDK），ARM `.S` 路径正常且 NEON 可用 | ⬜ **新增，M0.5 处理** |
+| **R-13** | **未在 aarch64 真机上实跑**（仅 2in1 模拟器 x86_64） | 高 | — | aarch64 目标已交叉编译成功并校验 ELF（AArch64），但**未在真机安装运行**；M0.5 阶段复跑同一套探针 | 🟡 **构建侧已就绪**（v1.5）：双 ABI HAP 已产出（arm64 库 ELF=`0xB7`），真机复跑脚本 `tools/run-ohos-device-check.sh` 已就绪并在 2in1 上端到端实测；**待真机重新连上后执行一次** |
+| **R-14** | **aarch64 的 NEON 汇编在 Windows 宿主上不可用**（`--disable-asm` 构建） | 中 | 中 | 生产构建改用 Linux 宿主（WSL + Linux 版 OHOS NDK），ARM `.S` 路径正常且 NEON 可用 | ⬜ **新增，M0.5 处理**（v1.5 实测补充：该构建的 `config.h` 里 `ARCH_AARCH64` 也是 **0**，即**未启用任何架构特例路径**，与 x86_64 版在 `ARCH_*` 上一致） |
 | **R-15** | **精简构建漏配组件导致静默降级**（`--disable-everything` 下漏配 `--enable-parser=gif`，GIF 帧无法切分，帧数统计为 0 且**不报任何错**） | 中 | — | 构建后逐项核对 `config_components.h` 关键组件；`ms_pipeline` 的帧数统计改为「解码计数为 0 时保留容器值」 | ✅ **新增并已解决**（v1.2） |
 | **R-16** | **输出时基的兜底策略错误**（主输入 fps ≠ 图输出真实帧率时，把 15 fps 时间戳压进 1/12 时基 → **重复 DTS** → matroska 封装报 `non monotonically increasing dts`） | 高 | 中 | 复刻 CLI 的 `choose_out_timebase()`：帧率未知时回退到**图输出的时基**而非主输入 fps；并沿链回溯补回被 `setpts` 抹掉的帧率（见 §10.5 #15、§10.9） | ✅ **新增并已解决**（v1.3） |
 | **R-17** | **C3 裁剪没有 H.264 输出**（OHOS 精简构建 `CONFIG_LIBX264 0` / `CONFIG_LIBOPENH264 0`） | 中 | 高 | 当前交付 **MJPEG + AVI**；升级路径：(a) 交叉编译 libopenh264；(b) 构建脚本加 `--enable-encoder=mpeg4` 后重建双架构 | 🟡 **新增，M3 以 MJPEG/AVI 交付**（见 §10.10.3） |
 | **R-18** | **滤镜图提前结束时被误判为失败**（`trim`/`select` 到达窗口末尾后拒绝再收帧，`av_buffersrc_add_frame_flags()` 返回 `AVERROR_EOF` 被当成硬错误） | 中 | 中 | 把 `AVERROR_EOF` 当作 EOF 处理：跳出送帧循环 + 发 EOF 标记 + 排空 sink（见 §10.5 #18、§10.10.5） | ✅ **新增并已解决**（v1.4） |
+| **R-19** | **双 ABI 共用一份 FFmpeg 头文件**（`config.h` / `avconfig.h` 是**按架构生成**的，共用会让 arm64 编译静默使用 x86_64 的 SIMD 特性宏） | 中 | 中 | 把按架构的头文件放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径、覆盖层缺失即 `FATAL_ERROR`；`stage-ffmpeg-ohos.sh` 按 ABI 产出（见 §10.11.1） | ✅ **新增并已解决**（v1.5） |
 
 ---
 
@@ -991,6 +1004,9 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 19 | ArkTS 编译报 `Property 'width' in type 'X' is not assignable to the same property in base type 'CustomComponent'` | `@State` 变量名与 ArkUI 的通用属性方法同名（`width` / `height` / `scale` / `background` 都是 `CommonAttribute` 的方法名） | 改名为不冲突的名字（`outWidth` / `outHeight` / `zoom` / `bgColor`） |
 | 20 | 页面内容整体沉在窗口中部，标题没有顶到上方 | `Scroll` 的默认对齐是 `Alignment.Center` | 给 `Scroll` 加 `.align(Alignment.TopStart)` |
 | 21 | `stage-ffmpeg-ohos.sh` 执行后 include 目录被清空，原生构建全面报错 | 脚本先 `rm -rf "$INC"` 再从 FFmpeg 源码树拷头文件；源码树不在时拷贝失败，目录已被删空 | 脚本在删目录**之前**检查源码树是否存在，缺失就报错退出 |
+| 22 | Git Bash 里 `hdc file recv /data/local/tmp/x.json <本地路径>` 报 `no such file or directory, path:D:/ProgramFiles/Git/data/local/tmp/x.json` | **MSYS 的参数路径转换**：把「长得像 POSIX 绝对路径」的参数改写成 Windows 路径；**设备端路径** `/data/...` 也被误改写 | 只对 hdc 关闭转换（`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`），**主机端路径改用 `cygpath -w` 显式转换**；注意这个开关是全局的，关掉后 `compare-gif.sh` 调 `ffmpeg.exe` 也会拿不到路径，所以必须按命令作用域设置 |
+| 23 | 双 ABI 构建时 arm64 可能静默使用 x86_64 的 FFmpeg 特性宏 | `config.h` / `libavutil/avconfig.h` 是**按架构生成**的；两份 `config.h` 有 166 行差异（全是 SIMD/汇编特性宏） | 按 ABI 放进 `include/<abi>/` 覆盖层并让 CMake 用 `${OHOS_ARCH}` 选路径（覆盖层在前），缺失即 `FATAL_ERROR`；`stage-ffmpeg-ohos.sh` 改为按 ABI 产出（见 §10.11.1） |
+| 24 | 模拟器 `hdc list targets` 里出现的实例是 `phone`，应用却报 `device type is not supported` | 本机同时跑着 **Mate 90 Pro（phone）** 与 **MateBook Pro（2in1）** 两个实例，前者占用了 5555；应用的 `deviceTypes` 只有 `2in1`/`tablet` | 按实例名启动目标模拟器并用 `param get const.product.devicetype` 确认；本机 5557 上的 MateBook Pro 才是 `2in1` |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -1039,7 +1055,7 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | V7 | 包体上限 | 查 AGC 文档；按 §4.5 裁剪后预计 10–20 MB，风险低 | 上架 |
 | V9 | 文件定位 | 用 `Want` + 文件管理器实现，实测 | C9 体验 |
 | V10 | CPU 配额 | 真机压测 1080p/3min 转 GIF | 性能验收线 |
-| — | **aarch64 真机** | 本次仅在模拟器（x86_64）验证；真机需复跑 | 上架前必做 |
+| — | **aarch64 真机** | 本次仅在模拟器（x86_64）验证；真机需复跑 | 上架前必做（**v1.5 已备好双 ABI HAP 与 `tools/run-ohos-device-check.sh`，待设备重新连上**） |
 
 ### 10.8 M1 引擎移植端到端实测（v1.2 新增）
 
@@ -1240,6 +1256,93 @@ I MsVerify: P15 decodeFrame   = ok=true 160x120 msg=完成
 
 ---
 
+### 10.11 双 ABI 构建与真机复跑准备（v1.5 新增）
+
+#### 10.11.1 为什么必须做按 ABI 的头文件隔离
+
+把 `abiFilters` 从 `["x86_64"]` 改成 `["arm64-v8a","x86_64"]` 之后，同一份源码要被两个架构各编一次，而 FFmpeg 的公开头文件里有**两个按架构生成**的头：
+
+| 头文件 | 谁生成 | x86_64 | aarch64 |
+|---|---|---|---|
+| `config.h` | `configure` | `ARCH_X86_64 1` / `ARCH_X86 1` | `ARCH_X86_64 0` / `ARCH_X86 0` |
+| `libavutil/avconfig.h` | `configure` | `AV_HAVE_FAST_UNALIGNED 1` | `AV_HAVE_FAST_UNALIGNED 0` |
+
+两份 `config.h` 全文 **166 行不同**，但**全部是 SIMD / 汇编特性宏**（`HAVE_SSE*`、`HAVE_AVX*`、`HAVE_FAST_*`、`HAVE_LOCAL_ALIGNED`、`HAVE_AS_ARCH_DIRECTIVE` …）。逐个查过引用点后的结论：
+
+- `ARCH_X86_64` 只被**内部**头文件引用（`libavcodec/put_bits.h`、`libavfilter/convolution.h`、`libswscale/swscale_internal.h`），我们不编译它们；
+- 唯一影响**公开 API 头文件**的是 `avconfig.h` 的 `AV_HAVE_FAST_UNALIGNED`（`libavutil/intreadwrite.h` 据此在 `AV_RL32` 的快路径与可移植路径之间选择）。
+
+> **一个反直觉的事实**：aarch64 侧 `config.h` 里的 `ARCH_AARCH64` 也是 **0** —— 因为该构建带了 `--disable-asm`（R-14），FFmpeg 没启用任何架构特例路径。**它与 x86_64 版在 `ARCH_*` 上完全一致**，所以「arm64 头文件会撞 `cntvct_el0`」的担心并不成立；真正分叉的是 SIMD 特性宏。
+
+处置：把 `config.h`、`libavutil/avconfig.h`（连同 `ffversion.h`）放进**按 ABI 的覆盖层** `include/<abi>/`，CMake 把该目录放在共享 include 目录**之前**，覆盖层缺失直接报错：
+
+```cmake
+set(FFMPEG_ABI_INC_DIR ${FFMPEG_INC_DIR}/${OHOS_ARCH})
+if(NOT EXISTS "${FFMPEG_ABI_INC_DIR}/config.h")
+  message(FATAL_ERROR "missing per-ABI FFmpeg headers: ...")
+endif()
+```
+
+实测编译命令（取自 `build.ninja`）：
+
+```
+arm64-v8a: -I.../third_party/ffmpeg/include/arm64-v8a  -I.../third_party/ffmpeg/include
+x86_64   : -I.../third_party/ffmpeg/include/x86_64     -I.../third_party/ffmpeg/include
+```
+
+#### 10.11.2 双 ABI 产物核验
+
+| 项 | 实测 |
+|---|---|
+| HAP | `entry-default-unsigned.hap`，**33,707,919 B**（含两套架构） |
+| `libs/arm64-v8a/` | 6 个 ffmpeg 库 × 2（`.so` + SONAME 版本文件）+ `libmsverify.so` + `libc++_shared.so` |
+| `libs/x86_64/` | 同上 |
+| ELF 机器类型 | arm64-v8a = `0xB7`（AArch64）、x86_64 = `0x3E`（x86-64） |
+| SONAME | 两架构完全一致：`libavutil.so.59` / `libavcodec.so.61` / `libavformat.so.61` / `libavfilter.so.10` / `libswscale.so.8` / `libswresample.so.5` |
+
+> SONAME 一致这点是必需的：设备上的动态链接器按 SONAME 找库，两套 ABI 共存时若 SONAME 不同会串库。
+
+#### 10.11.3 x86_64 回归实测（证明改造无副作用）
+
+在 2in1 模拟器（MateBook Pro，HarmonyOS 7.0.0 / API 26 / x86_64）上用**双 ABI HAP** 复跑整套探针：
+
+| 探针 | 结果 |
+|---|---|
+| P1 / P2 / P3 | `pong-from-native` / `Linux 5.10.210 x86_64 pageSize=4096` / zlib `78 9C` ✅ |
+| P4 | `rc=0 pid=…`，子进程标记文件读到 `child-process-ran` ✅ |
+| P5 | Canvas `getImageData` / `putImageData` 判定 **PASS** ✅ |
+| P6 / P7 | 滤镜链解析出 12 个滤镜 + alpha 表达式求值正确 / 真 GIF 编码 **PASS** ✅ |
+| P8 | `rc=0 frames=24 size=480x360 fps=12 bytes=483220` ✅ |
+| P9 | `rc=0 frames=24 size=480x640 fps=12 bytes=694719` ✅ |
+| P10 | `rc=0 inFrames=24 frames=60 size=160x120 bytes=12069` ✅ |
+| P11 | `ok=true 160x120 fps=12 dur=1.00 frames=12 codec=h264 size=5468` ✅ |
+| P12 | `ok=true frames=24 240x180 size=144973` ✅ |
+| P13 | `ok=true frames=60 160x120 size=12069` ✅ |
+| P14 | `ok=true frames=12 320x240 size=76302` ✅ |
+| P15 | `ok=true 160x120` ✅ |
+
+字节数与 v1.2 / v1.3 基线**完全一致**；与 Windows 黄金件对拍：
+
+| 对拍项 | 结果 |
+|---|---|
+| `out_key.gif` vs `win_gold_key.gif` | **PIXEL IDENTICAL**（rgb24 3,456,000 B，0 差异） |
+| `out_rot90.gif` vs `win_gold_rot90.gif` | **PIXEL IDENTICAL**（rgb24 22,118,400 B，0 差异） |
+
+#### 10.11.4 真机复跑：`tools/run-ohos-device-check.sh`
+
+新增一条命令把真机验证固化为可重复执行的流程：
+
+```bash
+tools/run-ohos-device-check.sh                    # 自动选第一个 USB 设备
+tools/run-ohos-device-check.sh 5KPBB25925200823   # 指定设备
+```
+
+它依次完成：装 HAP → `power-shell wakeup` → 拉起 `EntryAbility` → `uitest dumpLayout` 抓 UI 树并定位「自检」入口 → `uitest uiInput click` → 收 `hilog -x -T MsVerify` 的探针行 → 拉沙箱产物 → 与 Windows 黄金件对拍。已在 2in1 模拟器上端到端实测通过（结论见 §10.11.3）。
+
+**待办**：真机（`5KPBB25925200823`，HUAWEI MatePad Mini，HarmonyOS API 26 / tablet / aarch64）在本轮收尾时已从 USB 总线离线（`hdc list targets` 中消失，PnP 里也没有 ADB 接口），需重新插线并接受「允许 USB 调试」后执行上面那条命令。
+
+---
+
 ## 附录 A：能力搬运映射表（逐文件）
 
 | 源文件 | 行数 | 去向 | 改造类型 |
@@ -1282,3 +1385,4 @@ I MsVerify: P15 decodeFrame   = ok=true 160x120 msg=完成
 | v1.2 | 2026-11-18 | **完成 M1 引擎移植实测**：新增 `sdk/src/engine/`（进程内执行器 + C1 流水线，Windows 路径零改动）与 `harmony-app/` 正式工程；P8/P9 端到端探针在 2in1 上产出 GIF，与 Windows 黄金件**解码后逐字节 0 差异**（普通 12,441,600 B / 旋转 22,118,400 B）；**R-03 自动旋转解除**（竖拍样例 480×640 对齐）；**修复 `frames=0`**（根因：精简构建漏配 `--enable-parser=gif`，新增 R-15）；新增 §10.8；踩坑速查增至 14 条；新增 `tools/compare-gif.sh` |
 | v1.3 | 2026-11-19 | **完成 M2 抠像引擎移植实测**：新增 `sdk/src/engine/ms_keying.{h,cpp}` 并原样复用 `mask_builder.cpp`；执行器支持「一个源喂多个 buffersrc」（复刻 CLI 的重复 `[0:v]` 语义）；**修正输出时基兜底策略**（新增 R-16：帧率未知时改回退到图输出时基 + 沿链回溯补回 `setpts` 抹掉的帧率，修掉 `non monotonically increasing dts`）；P10 探针在 2in1 上产出 GIF，与 Windows 黄金件 **rgba 逐字节 0 差异**（4,608,000 B）且**逐帧节奏一致**；新增 §10.9；踩坑速查增至 17 条 |
 | v1.4 | 2026-11-19 | **完成 M3 应用界面与 C3 裁剪引擎实测**：`harmony-app/` 从单页探针变成完整应用（首页 + 视频转GIF + GIF抠图 + 视频裁剪 + 自检），新增生产 NAPI 接口 `media_api.cpp`（`napi_async_work` + 线程安全函数，Promise + 进度回调）；新增 C3 引擎 `sdk/src/engine/ms_crop.{h,cpp}`（Windows `buildFilterChain()` 的逐行移植）与 `decodeFirstFrame()`（裁剪页 WYSIWYG 预览帧来源）；**修正滤镜图提前结束被误判为失败**（新增 R-18：把 `av_buffersrc_add_frame_flags()` 的 `AVERROR_EOF` 当作 EOF）；**V5 闭环**（系统文件选择器实测通过，`.mp4` 过滤生效）；经真实界面「选文件 → 开始抠图」产出的 GIF 与 Windows 黄金件 **rgb24 3,456,000 字节 0 差异**；新增 R-17（C3 暂以 MJPEG/AVI 交付，OHOS 侧无 H.264 编码器）；新增 §10.10；踩坑速查增至 21 条 |
+| v1.5 | 2026-11-19 | **双 ABI 构建与 aarch64 真机复跑准备（R-13 收口中）**：`abiFilters` 由 `["x86_64"]` 改为 `["arm64-v8a","x86_64"]`，一次构建产出双 ABI HAP（33,707,919 B，含两套 ffmpeg 库，arm64 ELF=`0xB7`）；**按 ABI 隔离 FFmpeg 头文件**（新增 R-19：`config.h` / `libavutil/avconfig.h` 放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径、缺失即 `FATAL_ERROR`，`stage-ffmpeg-ohos.sh` 改为按 ABI 产出）；实测澄清「aarch64 侧 `ARCH_AARCH64` 也是 0」（`--disable-asm` 所致），真正分叉的只是 SIMD 特性宏；**x86_64 回归全绿**：P1–P15 通过，产物字节数与 v1.2/v1.3 基线逐字节一致，与 Windows 黄金件 **rgb24 3,456,000 与 22,118,400 字节 0 差异**；新增 `tools/run-ohos-device-check.sh`（装包→拉起→点开自检→收日志→拉产物→对拍）并在 2in1 模拟器上端到端实测；新增 §0.5 / §10.11；踩坑速查增至 24 条 |

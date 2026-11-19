@@ -68,3 +68,32 @@
 - 验收口径是**解码后逐字节比对**（`tools/compare-gif.sh`），不是压缩流字节：
   两端 GIF 字节必然不同（调色板透明槽位索引、palettegen 落点都不同），
   但 rgba 画面逐字节一致即算通过。
+
+### 鸿蒙工程是双 ABI 的：ffmpeg 头文件必须按架构隔离
+
+- `harmony-app/entry/build-profile.json5` 的 `abiFilters` 是
+  `["arm64-v8a","x86_64"]`（模拟器 x86_64 + 真机 aarch64），一次构建产出两套。
+- FFmpeg 的 `config.h` 与 `libavutil/avconfig.h` 是**按架构生成**的，两架构
+  相差 166 行（全为 SIMD/汇编特性宏）。它们放在
+  `harmony-app/entry/src/main/cpp/third_party/ffmpeg/include/<abi>/` 覆盖层里；
+  `CMakeLists.txt` 用 `${OHOS_ARCH}` 选路径，**覆盖层目录排在共享 include
+  目录之前**，覆盖层缺失直接 `FATAL_ERROR`。
+- **不要**把这两份头文件"顺手"合并回共享 include 目录 —— 那样 arm64 编译会
+  静默使用 x86_64 的特性宏。`tools/stage-ffmpeg-ohos.sh` 按 ABI 产出覆盖层
+  （该目录被 gitignore，只能靠脚本重建）。
+- 实测澄清：aarch64 侧 `config.h` 的 `ARCH_AARCH64` 也是 **0**（该构建带
+  `--disable-asm`，未启用任何架构特例路径），与 x86_64 版在 `ARCH_*` 上一致；
+  真正分叉的只有 SIMD 特性宏。
+
+### 鸿蒙设备验证：走 tools/run-ohos-device-check.sh
+
+- 真机/模拟机验证不要手敲一串 hdc 命令，直接跑
+  `tools/run-ohos-device-check.sh [target]`：装包 → 唤醒 → 拉起应用 →
+  抓 UI 树定位「自检」→ 点击 → 收探针日志 → 拉沙箱产物 → 与 Windows
+  黄金件对拍。
+- 在 Git Bash 里跑时有个坑：hdc 是 Windows 原生程序，**MSYS 会把设备端路径
+  （`/data/...`）改写成 Windows 路径**，必须对 hdc 单独关掉转换
+  （`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`），主机端路径用
+  `cygpath -w` 转换。这个开关是全局的，关掉后 `compare-gif.sh` 调
+  `ffmpeg.exe` 也会拿不到路径，所以必须按命令作用域设置。
+  详见 `docs/harmonyos-pc-port-architecture.md` §10.5 #22。
