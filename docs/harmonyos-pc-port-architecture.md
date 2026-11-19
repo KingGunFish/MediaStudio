@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.3（方案验证 + M1 引擎移植 + M2 抠像引擎移植实测）
+> 版本：v1.4（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测）
 > 日期：2026-11-19
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）与 M2（C2 抠像）两条引擎流水线均已跑通端到端，输出与 Windows 版逐像素一致（含自动旋转）**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致**，详见 §10 验证报告
 
 ---
 
@@ -65,6 +65,23 @@ M2 = 把 **C2 抠像（gif_keying）** 流水线也搬进进程内引擎：复�
 | M2-f | aarch64 真机 | 未上真机 | ⬜ 仍开放（R-13），上架前必做 |
 
 > **M2 的真正收获不是"抠像能跑"，而是暴露了一个此前从未被触发的引擎级缺陷**：输出时基的兜底策略。它在 C1 上恰好给出正确结果（因为 C1 的图输出帧率已知），在 C2 上则会把 15 fps 的时间戳压进 1/12 时基，**产生重复 DTS 并让 matroska 封装直接报错**。详见 §10.9。
+
+### 0.4 v1.4 M3 应用界面与 C3 裁剪引擎实测结论速览
+
+M3 = 把 `harmony-app/` 从「只有一页探针」变成**真正的应用**（首页 + 视频转GIF + GIF抠图 + 视频裁剪 + 自检），并补上 C3 裁剪引擎。
+
+| # | 验证项 | v1.3 状态 | **v1.4 实测结论** |
+|---|---|---|---|
+| M3-a | 应用外壳与四个页面 | 只有探针页 | ✅ **通过**：左侧导航 + 右侧内容区，首页/视频转GIF/GIF抠图/视频裁剪/自检五页在 2in1 上全部正常渲染与交互 |
+| M3-b | **生产 NAPI 接口**（异步 + 进度回调） | 不存在 | ✅ **通过**：`media_api.cpp` 用 `napi_async_work` + 线程安全函数实现 5 个接口，返回 Promise，进度回调真实触发 |
+| M3-c | **C3 裁剪引擎** | 未实现 | ✅ **通过**：新增 `sdk/src/engine/ms_crop.{h,cpp}`，滤镜链是 Windows `buildFilterChain()` 的逐行移植；设备产出 320×240 / 12 帧 |
+| M3-d | **WYSIWYG 预览帧来源** | 未解决 | ✅ **通过**：新增 `decodeFirstFrame()`（`trim=end_frame=1` + PNG 编码器），裁剪页预览正常显示首帧并支持拖拽/缩放 |
+| M3-e | **系统文件选择器**（V5） | 仅 API 存在 | ✅ **通过**：`DocumentViewPicker` 在 2in1 上正常拉起，`fileSuffixFilters` 生效（只列 .mp4），选中的文件被拷进沙箱后正常处理 |
+| M3-f | **界面产物的像素一致性** | — | ✅ **通过**：在应用里经「选文件 → 开始抠图」产出的 GIF，与 Windows 黄金件 **rgb24 3,456,000 字节 0 差异** |
+| M3-g | **C3 输出容器** | — | 🟡 **部分闭环**：OHOS 精简构建**没有 H.264 编码器**（libx264 是 GPL、libopenh264 未集成），当前交付 **MJPEG + AVI**，与 Windows 的 MP4/H.264 不同（新增 R-17） |
+| M3-h | 滤镜图提前结束时被误判为失败 | 未暴露 | ✅ **已修复**（新增 R-18）：`trim` 等滤镜到窗口末尾后拒绝再收帧，`av_buffersrc_add_frame_flags()` 返回 `AVERROR_EOF` 被当成硬错误 |
+
+> **M3 暴露的第二个引擎级缺陷（R-18）同样是"沉默"的**：执行器把滤镜图正常的结束信号当成了失败，首帧解码因此报 `End of file`。这类缺陷只有在**引擎开始复用既有滤镜**（C1/C2 自己不裁窗口）时才会显形 —— 与 R-16 同属「里程碑推进才会暴露」的一类。
 
 ---
 
@@ -729,13 +746,15 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 
 > **v1.1 更新**：M0 的核心假设已在本机验证通过（§10），R-01/R-02/R-04/R-06 均已解除。M0 剩余工作只有「aarch64 真机复跑」与「把探针固化为回归用例」。
 
-| 阶段 | 内容 | 产出 | 估算 | **v1.1 状态** |
+| 阶段 | 内容 | 产出 | 估算 | **v1.4 状态** |
 |---|---|---|---|---|
-| **M0 可行性验证** | 最小鸿蒙工程；ffmpeg OHOS 最小构建；NAPI 冒烟转 GIF | `libmedia_studio.so`、`build-ffmpeg-ohos.sh`、冒烟 Demo | 2–3 人日 | 🟡 **已完成 80%**：ffmpeg 交叉编译 ✅、NAPI ✅、子进程 ✅、Canvas ✅、zlib ✅；**待补 aarch64 真机复跑 + 真 GIF 编码端到端** |
-| **M1 引擎移植** | 进程内 CLI 子集执行器 + 探针 + 单帧解码 + 任务表/取消 | C1/C2/C3/C4 全部可用 | 9–12 人日 | ⬜ 未开始 |
-| **M2 UI 重写** | 7 页面 + 4 lib 翻译 + Canvas 封装 + 拖拽 | 功能对齐 Windows 版 | 15–20 人日 | ⬜ 未开始 |
-| **M3 打磨与上架** | 进度/取消、错误提示、体积裁剪、签名、上架材料 | 可发布 HAP | 5–8 人日 | ⬜ 未开始 |
+| **M0 可行性验证** | 最小鸿蒙工程；ffmpeg OHOS 最小构建；NAPI 冒烟转 GIF | `libmedia_studio.so`、`build-ffmpeg-ohos.sh`、冒烟 Demo | 2–3 人日 | ✅ **已完成**：ffmpeg 交叉编译 ✅、NAPI ✅、子进程 ✅、Canvas ✅、zlib ✅、真 GIF 编码端到端 ✅；**aarch64 真机复跑仍待做（R-13）** |
+| **M1 引擎移植** | 进程内 CLI 子集执行器 + 探针 + 单帧解码 + 任务表/取消 | C1/C2/C3/C4 全部可用 | 9–12 人日 | 🟡 **C1/C2/C3/C4 均已跑通端到端**（§10.8/§10.9/§10.10）；**任务表/取消**（进度已通，取消未做） |
+| **M2 UI 重写** | 7 页面 + 4 lib 翻译 + Canvas 封装 + 拖拽 | 功能对齐 Windows 版 | 15–20 人日 | 🟡 **已完成 4 个主页面**（首页/视频转GIF/GIF抠图/视频裁剪）+ 自检页；**图片裁剪、图片转黑白、图标生成、设置尚未开工**；拖拽导入未做（R-08/V6） |
+| **M3 打磨与上架** | 进度/取消、错误提示、体积裁剪、签名、上架材料 | 可发布 HAP | 5–8 人日 | ⬜ 未开始：进度 ✅、错误提示 ✅；**取消、体积裁剪、签名、上架材料**待做 |
 | （可选）M1.5 ArkWeb 过渡版 | ArkWeb 壳 + Bridge | 快速可用版本 | 8–12 人日 | ⬜ 视需要 |
+
+> **命名说明**：本节沿用 v1.0 的**工程里程碑**命名（M0/M1/M2/M3）；而 §0.2/§0.3/§0.4 的 **M1/M2/M3** 是**能力里程碑**（C1 引擎 / C2 抠像 / 应用界面+C3）。两者不是同一套编号，读文档时注意区分。
 
 **合计（不含 M1.5）：35–48 人日**（M0 已完成约 2 人日）
 
@@ -761,13 +780,15 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | R-07 | 用户切后台时任务被冻结/回收 | 中 | 中 | 申请长时任务（`KEEP_BACKGROUND_RUNNING`）；或明确产品行为为「切走即中断」 | ⬜ 开放 |
 | R-08 | 拖拽在 PC 上不可用 | 低 | 中 | 降级为点击选择；V6 验证 | ⬜ 开放 |
 | R-09 | x86_64/arm64 双架构维护成本 | 低 | 高 | release 仅 arm64；CI 统一构建脚本 | ⬜ 开放（模拟器必须 x86_64） |
-| R-10 | ArkTS 静态类型约束导致 UI 重写量超预期 | 中 | 中 | 先做 Crop（最复杂）页面做样本，校正估算 | ⬜ 开放 |
+| R-10 | ArkTS 静态类型约束导致 UI 重写量超预期 | 中 | 中 | 先做 Crop（最复杂）页面做样本，校正估算 | 🟡 **部分闭环**（v1.4）：Crop 页面已按 ArkUI 重写并跑通；代价是 `@State` 变量不能与 `CommonAttribute` 的方法同名（`width`/`height`/`scale`/`background`），需改名（见 §10.5 #19） |
 | R-11 | `sdk/` 双端共享导致 Windows 版回归 | 中 | 中 | 鸿蒙改动全部新增在 `sdk/src/engine/`，不触碰 Windows 路径；CI 跑 Windows 冒烟 | ⬜ 开放 |
 | **R-12** | **PNG 编码依赖 `@ohos.zlib` 的假设被推翻** | 中 | — | 已改为原生 `compress2()`（实测 `78 9C`），`pngrgb.ts` 保留，仅替换一处调用 | ✅ **已关闭**（v1.1 新增并解决） |
 | **R-13** | **未在 aarch64 真机上实跑**（仅 2in1 模拟器 x86_64） | 高 | — | aarch64 目标已交叉编译成功并校验 ELF（AArch64），但**未在真机安装运行**；M0.5 阶段复跑同一套探针 | ⬜ **新增，上架前必做** |
 | **R-14** | **aarch64 的 NEON 汇编在 Windows 宿主上不可用**（`--disable-asm` 构建） | 中 | 中 | 生产构建改用 Linux 宿主（WSL + Linux 版 OHOS NDK），ARM `.S` 路径正常且 NEON 可用 | ⬜ **新增，M0.5 处理** |
 | **R-15** | **精简构建漏配组件导致静默降级**（`--disable-everything` 下漏配 `--enable-parser=gif`，GIF 帧无法切分，帧数统计为 0 且**不报任何错**） | 中 | — | 构建后逐项核对 `config_components.h` 关键组件；`ms_pipeline` 的帧数统计改为「解码计数为 0 时保留容器值」 | ✅ **新增并已解决**（v1.2） |
 | **R-16** | **输出时基的兜底策略错误**（主输入 fps ≠ 图输出真实帧率时，把 15 fps 时间戳压进 1/12 时基 → **重复 DTS** → matroska 封装报 `non monotonically increasing dts`） | 高 | 中 | 复刻 CLI 的 `choose_out_timebase()`：帧率未知时回退到**图输出的时基**而非主输入 fps；并沿链回溯补回被 `setpts` 抹掉的帧率（见 §10.5 #15、§10.9） | ✅ **新增并已解决**（v1.3） |
+| **R-17** | **C3 裁剪没有 H.264 输出**（OHOS 精简构建 `CONFIG_LIBX264 0` / `CONFIG_LIBOPENH264 0`） | 中 | 高 | 当前交付 **MJPEG + AVI**；升级路径：(a) 交叉编译 libopenh264；(b) 构建脚本加 `--enable-encoder=mpeg4` 后重建双架构 | 🟡 **新增，M3 以 MJPEG/AVI 交付**（见 §10.10.3） |
+| **R-18** | **滤镜图提前结束时被误判为失败**（`trim`/`select` 到达窗口末尾后拒绝再收帧，`av_buffersrc_add_frame_flags()` 返回 `AVERROR_EOF` 被当成硬错误） | 中 | 中 | 把 `AVERROR_EOF` 当作 EOF 处理：跳出送帧循环 + 发 EOF 标记 + 排空 sink（见 §10.5 #18、§10.10.5） | ✅ **新增并已解决**（v1.4） |
 
 ---
 
@@ -818,7 +839,7 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | V2 | ArkUI `Video` 组件 API 与 PC 行为 | 最小 Demo | 影响预览方案选型 | ⬜ 开放（可由 `decodeFrame` 方案绕开） |
 | V3 | `OH_Ability_StartNativeChildProcess` 对三方应用是否开放 | 真机/模拟器调用 | 决定能否保留子进程架构 | ✅ **通过**（§10.3 P4） |
 | V4 | zlib 字节流的获取途径 | SDK API 核查 + 运行时探针 | 决定 PNG 编码器实现位置 | ✅ **通过，但结论修正**（§10.3 P3 / §5.6） |
-| V5 | `picker.DocumentViewPicker` 扩展名过滤与多选 | SDK API 核查 | 影响 C9 体验 | ✅ API 存在（`fileSuffixFilters`/`maxSelectNumber`），交互待实测 |
+| V5 | `picker.DocumentViewPicker` 扩展名过滤与多选 | SDK API 核查 | 影响 C9 体验 | ✅ **通过**（v1.4：2in1 上正常拉起，`fileSuffixFilters` 只列 `.mp4`，选中的文件被拷进沙箱后正常处理，见 §10.10.4） |
 | V6 | ArkUI 拖拽能否接收 PC 文件管理器拖入 | 真机测试 | 决定 C10 是否降级 | ⬜ 开放 |
 | V7 | AGC 上传的 HAP 包体上限与签名要求 | 查开发者文档 | 决定体积裁剪目标 | 🟡 **部分闭环**：实测 HAP 含 ffmpeg 后 **18.88 MB**，体积无压力；签名 profile 与 bundleName 强绑定 |
 | V8 | ffmpeg 在 OHOS 上的 musl 适配 | 交叉编译实测 | 决定 R-01 是否解除 | ✅ **通过**（§10.4，双架构 + 设备实测） |
@@ -966,6 +987,10 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 15 | matroska 封装报 `non monotonically increasing dts to muxer in stream 0: 17 >= 17` | **输出时基兜底错误**：`fps=15` 的链末端有 `setpts=PTS-STARTPTS`，FFmpeg 7.1 的 `setpts` 把输出链接的帧率标成**未知**（`libavfilter/setpts.c: config_output_video` → `l->frame_rate = {1,0}`），`concat` 随之输出 `1/0`；执行器此前用**主输入 fps**（12/1）兜底，把 15 fps 的时间戳压进 `1/12` 时基 → 步长 0.8 → **相邻帧落到同一 DTS** | 复刻 CLI 的 `fftools/ffmpeg_filter.c: choose_out_timebase()`：`tb = 1/图输出帧率`；帧率未知时 `tb = 图输出时基`（`1/1000000`，无损），**不再用主输入 fps** |
 | 16 | `setpts` 之后的链，帧率在 7.1.1 上"丢失"，但宿主 CLI（nightly）上还在 | 两端 ffmpeg 版本不同：宿主 `N-126303-g9f35e220ff-20260827` 的 `setpts` **保留**输入帧率，OHOS 侧固定的 **7.1.1** 把帧率置为未知 | 沿链**回溯**到最近一个仍带帧率的链接（`ff_filter_link(link)->frame_rate`），补回宿主版本会报出的值；帧率因此是 15/1，编码器时基 `1/15`，与宿主完全一致 |
 | 17 | 同一段视频两端产出的 GIF **字节不同**但画面相同 | 两端 ffmpeg 版本不同导致**调色板透明槽位索引不同**（宿主 255 / 7.1.1 侧 10）与 LZW 压缩流不同；GCT 的 RGB 完全一致 | 以**解码后逐字节比对**为验收口径（`tools/compare-gif.sh`，本轮用 rgba 含 alpha）；不追求压缩流字节一致 |
+| 18 | 首帧解码报 `End of file`（`AVERROR_EOF`），但图输出其实已经产出 | 执行器把 `av_buffersrc_add_frame_flags()` 的返回值当成硬错误；而 `trim` / `select` 这类滤镜到达窗口末尾后会让滤镜图**拒绝再收帧**，返回的 `AVERROR_EOF` 是「流结束了」，不是失败 | 把 `AVERROR_EOF` 当作 EOF 处理：跳出送帧循环 + 给 buffersrc 发 EOF 标记 + 把 sink 排空 |
+| 19 | ArkTS 编译报 `Property 'width' in type 'X' is not assignable to the same property in base type 'CustomComponent'` | `@State` 变量名与 ArkUI 的通用属性方法同名（`width` / `height` / `scale` / `background` 都是 `CommonAttribute` 的方法名） | 改名为不冲突的名字（`outWidth` / `outHeight` / `zoom` / `bgColor`） |
+| 20 | 页面内容整体沉在窗口中部，标题没有顶到上方 | `Scroll` 的默认对齐是 `Alignment.Center` | 给 `Scroll` 加 `.align(Alignment.TopStart)` |
+| 21 | `stage-ffmpeg-ohos.sh` 执行后 include 目录被清空，原生构建全面报错 | 脚本先 `rm -rf "$INC"` 再从 FFmpeg 源码树拷头文件；源码树不在时拷贝失败，目录已被删空 | 脚本在删目录**之前**检查源码树是否存在，缺失就报错退出 |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -1130,6 +1155,91 @@ I A03200/MsVerify: P10 gifKeying   = rc=0 inFrames=24 frames=60 size=160x120 byt
 
 ---
 
+### 10.10 M3 应用界面与 C3 裁剪引擎端到端实测（v1.4 新增）
+
+**载体**：`harmony-app/` 正式工程，`entry/src/main/ets/pages/` 下五个页面 + `entry/src/main/ets/common/{MediaApi,FilePicker}.ets`；原生侧新增 `entry/src/main/cpp/media_api.cpp`。
+
+#### 10.10.1 应用外壳与页面
+
+外壳刻意**不引入 `Navigation` 路由**，而是 `Row`（左 190px 深色导航栏 + 右内容区）+ `@State tab` 切换，降低 API 兼容风险。页面清单：
+
+| 页面 | 文件 | 对应 Windows 版 |
+|---|---|---|
+| 首页 | `pages/Index.ets` | `App.tsx` 的功能网格 |
+| 视频转 GIF | `pages/Converter.ets` | `pages/Converter.tsx` |
+| GIF 抠图 | `pages/Keying.ets` | `pages/Keying.tsx` |
+| 视频裁剪 | `pages/VideoCrop.ets` | `pages/VideoCrop.tsx` |
+| 自检 | `pages/Diagnostics.ets` | 原 `pages/Index.ets` 探针页（P1–P10 全部保留，新增 P11–P15） |
+
+#### 10.10.2 生产 NAPI 接口
+
+`media_api.cpp` 提供 5 个接口，全部走 `napi_async_work` + `napi_threadsafe_function`，**返回 Promise**、**进度回调走线程安全函数**，因此 ArkUI 事件循环不会被几秒级的转换阻塞：
+
+| 接口 | 签名 | 状态 |
+|---|---|---|
+| `probeMedia` | `(path) => Promise<MediaInfo>` | ✅ |
+| `convertVideoToGif` | `(in, out, opts, onProgress) => Promise<MediaResult>` | ✅ |
+| `convertGifKeying` | `(in, out, opts, onProgress) => Promise<MediaResult>` | ✅ |
+| `convertVideoCrop` | `(in, out, opts, onProgress) => Promise<MediaResult>` | ✅ |
+| `decodeFirstFrame` | `(in, out) => FrameInfo` | ✅（同步，供裁剪页首帧预览） |
+
+选项对象字段名与 `electron-app/src/renderer/src/types.ts` **完全一致**，两端共用一套契约。
+
+#### 10.10.3 C3 裁剪引擎
+
+新增 `sdk/src/engine/ms_crop.{h,cpp}`：
+
+- `build_crop_filter_chain()` 是 `electron-app/src/main/videoCrop.ts` 的 `buildFilterChain()` 的**逐行移植**（`crop → scale → pad` 三段），滤镜字符串格式一致。
+- `video_crop_inproc()` 复用进程内执行器，并新增 `probe_source_rotation()`（读 stream 的 coded side data，按 `fftools/cmdutils.c:get_rotation()` 归一）来还原 CLI 的自动旋转。
+
+**输出容器缺口（R-17）**：OHOS 精简构建里**没有 H.264 编码器**（`CONFIG_LIBX264 0`、`CONFIG_LIBOPENH264 0`），已启用的视频编码器只有 `gif / ffv1 / png / mjpeg / rawvideo`。当前 C3 交付为 **MJPEG + AVI**，与 Windows 的 MP4/H.264 不同。两条升级路径：(a) 交叉编译 libopenh264；(b) 在构建脚本加 `--enable-encoder=mpeg4` 后重建双架构 ffmpeg。
+
+#### 10.10.4 设备端实测（2in1 模拟器，HarmonyOS 26.0.0 API 26）
+
+自检页 P1–P15 全部通过，节选：
+
+```
+I MsVerify: P10 gifKeying   = rc=0 inFrames=24 frames=60 size=160x120 bytes=12069
+I MsVerify: P11 probeMedia    = ok=true 160x120 fps=12 dur=1.00 frames=12 codec=h264 size=5468
+I MsVerify: P12 convertVideo  = ok=true frames=24 240x180 size=144973 msg=完成
+I MsVerify: P13 convertKeying = ok=true frames=60 160x120 size=12069 msg=完成
+I MsVerify: P14 convertCrop   = ok=true frames=12 320x240 size=76302 msg=完成
+I MsVerify: P15 decodeFrame   = ok=true 160x120 msg=完成
+```
+
+**通过真实界面走完的链路**（系统文件选择器 → 转换 → 预览）：
+
+| 步骤 | 证据 |
+|---|---|
+| 打开选择器 | `DocumentViewPicker` 正常拉起，底部过滤条显示 `.mp4`，只列出 mp4 |
+| 选中视频 | `staged file://docs/storage/Users/currentUser/Videos/test.mp4 -> /data/storage/el2/base/haps/entry/files/test.mp4` |
+| 探测 | 页面显示 `160 × 120 · 时长 1.0 秒 · 大小 5 KB · h264` |
+| 视频转 GIF | `完成: 24 帧, 160x120, 70 KB`，GIF 预览在页内正常动画 |
+| 视频裁剪 | `crop: filter = crop=160:120:0:0:exact=1,scale=160:120:flags=lanczos,pad=160:120:0:0:0x000000`，产出 `media_studio_crop.avi`（69,020 B，12 帧） |
+| GIF 抠图 | `完成: 60 帧, 160x120, 12 KB`，产出 `media_studio_keyed.gif`（12,069 B） |
+
+**像素级对拍**（`tools/compare-gif.sh`，应用界面产出的 `media_studio_keyed.gif` vs Windows 黄金件）：
+
+| 用例 | 宿主黄金件 | 应用产出 | 容器统计 | 解码后比对 | 结论 |
+|---|---|---|---|---|---|
+| C2 抠像 GIF | `tmp/harmony-verify/key/win_gold_key.gif`（12,021 B） | 12,069 B | 160×120 / 60 帧 / `r_frame_rate=15/1` / `avg_frame_rate=50/3` / `duration=4.000000` —— **逐字段一致** | rgb24 **3,456,000 字节 0 差异** | ✅ 像素一致 |
+| C1 回归 | — | `out.gif` 483,220 B / `out_rot90.gif` 694,719 B | 与 v1.2 记录**完全相同** | 同上 | ✅ 无回归 |
+| C2 回归 | — | `out_key.gif` 12,069 B | 与 v1.3 记录**完全相同** | 同上 | ✅ 无回归 |
+
+> **这一轮最有说服力的一条**：产物不是探针脚本生成的，而是**用户在应用里点了「选择文件 → 开始抠图」**得到的 —— 即 ArkUI 页面 → NAPI 异步接口 → 进程内引擎 → 沙箱文件这条**完整产品链路**，其输出与 Windows 黄金件逐像素一致。
+
+#### 10.10.5 R-18：滤镜图提前结束被误判为失败
+
+**现象**：首帧解码返回 `AVERROR_EOF`（`End of file`），而滤镜图其实已经产出了那一帧。
+
+**根因**：`trim=end_frame=1` 到达窗口末尾后，滤镜图会**拒绝再收帧**，`av_buffersrc_add_frame_flags()` 因此返回 `AVERROR_EOF`。执行器此前把任何 `< 0` 都当成硬错误，于是整个作业失败。
+
+**修正**（`sdk/src/engine/ms_inproc_exec.cpp`）：把 `AVERROR_EOF` 视作「流结束」——跳出送帧循环、给所有 buffersrc 发 EOF 标记、把 sink 排空后正常收尾。
+
+> **为什么 C1/C2 一直没暴露**：这两条流水线的 `trim` 窗口都覆盖整段素材，滤镜图从不会提前拒绝收帧。**只有当引擎开始复用「会提前结束的滤镜」时，这个缺陷才显形。**
+
+---
+
 ## 附录 A：能力搬运映射表（逐文件）
 
 | 源文件 | 行数 | 去向 | 改造类型 |
@@ -1171,3 +1281,4 @@ I A03200/MsVerify: P10 gifKeying   = rc=0 inFrames=24 frames=60 size=160x120 byt
 | v1.1 | 2026-11-18 | **完成本机实测验证**（HarmonyOS 26.0.0 API 26 + 2in1 模拟器）：新增 §10 验证报告；V1/V3/V4/V5/V7/V8 闭环，新增 V11/V12；R-01/R-02/R-04/R-06 解除；新增 R-12/R-13/R-14；修正 SDK 版本（API 26）、PNG 编码方案（deflate 下沉原生）、进程模型（两段式）、FFmpeg 7.x avfilter API 差异、`geq` 输出为 planar `gbrap`；补入实测的双架构 ffmpeg configure 参数、产物体积与 11 条踩坑速查 |
 | v1.2 | 2026-11-18 | **完成 M1 引擎移植实测**：新增 `sdk/src/engine/`（进程内执行器 + C1 流水线，Windows 路径零改动）与 `harmony-app/` 正式工程；P8/P9 端到端探针在 2in1 上产出 GIF，与 Windows 黄金件**解码后逐字节 0 差异**（普通 12,441,600 B / 旋转 22,118,400 B）；**R-03 自动旋转解除**（竖拍样例 480×640 对齐）；**修复 `frames=0`**（根因：精简构建漏配 `--enable-parser=gif`，新增 R-15）；新增 §10.8；踩坑速查增至 14 条；新增 `tools/compare-gif.sh` |
 | v1.3 | 2026-11-19 | **完成 M2 抠像引擎移植实测**：新增 `sdk/src/engine/ms_keying.{h,cpp}` 并原样复用 `mask_builder.cpp`；执行器支持「一个源喂多个 buffersrc」（复刻 CLI 的重复 `[0:v]` 语义）；**修正输出时基兜底策略**（新增 R-16：帧率未知时改回退到图输出时基 + 沿链回溯补回 `setpts` 抹掉的帧率，修掉 `non monotonically increasing dts`）；P10 探针在 2in1 上产出 GIF，与 Windows 黄金件 **rgba 逐字节 0 差异**（4,608,000 B）且**逐帧节奏一致**；新增 §10.9；踩坑速查增至 17 条 |
+| v1.4 | 2026-11-19 | **完成 M3 应用界面与 C3 裁剪引擎实测**：`harmony-app/` 从单页探针变成完整应用（首页 + 视频转GIF + GIF抠图 + 视频裁剪 + 自检），新增生产 NAPI 接口 `media_api.cpp`（`napi_async_work` + 线程安全函数，Promise + 进度回调）；新增 C3 引擎 `sdk/src/engine/ms_crop.{h,cpp}`（Windows `buildFilterChain()` 的逐行移植）与 `decodeFirstFrame()`（裁剪页 WYSIWYG 预览帧来源）；**修正滤镜图提前结束被误判为失败**（新增 R-18：把 `av_buffersrc_add_frame_flags()` 的 `AVERROR_EOF` 当作 EOF）；**V5 闭环**（系统文件选择器实测通过，`.mp4` 过滤生效）；经真实界面「选文件 → 开始抠图」产出的 GIF 与 Windows 黄金件 **rgb24 3,456,000 字节 0 差异**；新增 R-17（C3 暂以 MJPEG/AVI 交付，OHOS 侧无 H.264 编码器）；新增 §10.10；踩坑速查增至 21 条 |
