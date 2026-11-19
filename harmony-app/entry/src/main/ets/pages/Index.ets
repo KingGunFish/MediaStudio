@@ -7,6 +7,10 @@
 import { ConverterPage } from './Converter';
 import { KeyingPage } from './Keying';
 import { VideoCropPage } from './VideoCrop';
+import { MonoPage } from './Mono';
+import { CropPage } from './Crop';
+import { IconsPage } from './Icons';
+import { SettingsPage } from './Settings';
 import { DiagnosticsPage } from './Diagnostics';
 
 interface NavEntry {
@@ -24,6 +28,10 @@ struct Index {
     { id: 'converter', label: '视频转GIF', hint: '把视频转换为高质量 GIF' },
     { id: 'keying', label: 'GIF抠图', hint: '去掉 GIF 背景与水印' },
     { id: 'videocrop', label: '视频裁剪', hint: '重新构图到固定画布' },
+    { id: 'mono', label: '图片转黑白', hint: '1 位黑白 BMP 与墨水屏数组' },
+    { id: 'crop', label: '图片裁剪', hint: '自定义画布裁剪与缩放' },
+    { id: 'icons', label: '图标生成', hint: '一键产出上架全套图标' },
+    { id: 'settings', label: '设置', hint: '关于与说明' },
     { id: 'diagnostics', label: '自检', hint: '引擎与平台能力探针' }
   ];
 
@@ -58,7 +66,7 @@ struct Index {
       .alignItems(HorizontalAlign.Start)
 
       Grid() {
-        ForEach(this.nav.slice(1, 4), (entry: NavEntry) => {
+        ForEach(this.nav.slice(1), (entry: NavEntry) => {
           GridItem() {
             Column({ space: 6 }) {
               Text(entry.label).fontSize(17).fontWeight(FontWeight.Medium)
@@ -118,6 +126,14 @@ struct Index {
           KeyingPage()
         } else if (this.tab === 'videocrop') {
           VideoCropPage()
+        } else if (this.tab === 'mono') {
+          MonoPage()
+        } else if (this.tab === 'crop') {
+          CropPage()
+        } else if (this.tab === 'icons') {
+          IconsPage()
+        } else if (this.tab === 'settings') {
+          SettingsPage()
         } else {
           DiagnosticsPage()
         }
