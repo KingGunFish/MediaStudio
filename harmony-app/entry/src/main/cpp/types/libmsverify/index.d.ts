@@ -45,3 +45,12 @@ export const gifEncodeProbe: (outputPath: string) => string;
  * same intermediate files as the Windows build.
  */
 export const videoToGif: (inputPath: string, outputPath: string, keepIntermediates?: boolean) => string;
+
+/**
+ * Runs the production C2 keying pipeline (background keying of an animated
+ * GIF) in-process on a real GIF file and writes the result to `outputPath`.
+ *
+ * The filter chain is the shared, unmodified mask_builder.cpp expression, so
+ * the output has to match the Windows build pixel by pixel.
+ */
+export const gifKeying: (inputPath: string, outputPath: string) => string;

@@ -33,26 +33,41 @@ struct Index {
   }
 
   /**
-   * Copies a bundled sample clip into the app sandbox and runs the
-   * end-to-end video -> GIF pipeline on it.
+   * Copies a bundled rawfile into the app sandbox and returns its path.
    *
    * The clips ship as rawfiles so that the probe needs no file permission
    * and no user interaction; the app sandbox itself is not writable from
    * adb/hdc.
    */
+  private stageRawFile(ctx: common.UIAbilityContext, rawName: string): string {
+    const buf: Uint8Array = ctx.resourceManager.getRawFileContentSync(rawName);
+    const target = ctx.filesDir + '/' + rawName;
+    const file = fileIo.openSync(target,
+      fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+    fileIo.writeSync(file.fd, buf.buffer);
+    fileIo.closeSync(file);
+    return target;
+  }
+
   private stageSampleVideo(ctx: common.UIAbilityContext, label: string,
     rawName: string, outName: string): void {
     try {
-      const buf: Uint8Array = ctx.resourceManager.getRawFileContentSync(rawName);
-      const target = ctx.filesDir + '/' + rawName;
-      const file = fileIo.openSync(target,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, buf.buffer);
-      fileIo.closeSync(file);
+      const target = this.stageRawFile(ctx, rawName);
       const output = ctx.filesDir + '/' + outName;
       this.add(label + ' videoToGif  = ' + msverify.videoToGif(target, output, true));
     } catch (e) {
       this.add(label + ' videoToGif  FAILED ' + JSON.stringify(e));
+    }
+  }
+
+  private stageKeying(ctx: common.UIAbilityContext, label: string,
+    rawName: string, outName: string): void {
+    try {
+      const target = this.stageRawFile(ctx, rawName);
+      const output = ctx.filesDir + '/' + outName;
+      this.add(label + ' gifKeying   = ' + msverify.gifKeying(target, output));
+    } catch (e) {
+      this.add(label + ' gifKeying   FAILED ' + JSON.stringify(e));
     }
   }
 
@@ -109,9 +124,13 @@ struct Index {
     // P9 - the same pipeline on a clip that carries a 90 degree display
     //      matrix, i.e. the vertical-shot case that relies on the CLI's
     //      auto-rotation being reproduced inside the process.
+    // P10 - the C2 keying pipeline on an animated GIF, which needs the
+    //       shared mask_builder filter chain (two parallel chains that
+    //       share one input).
     const ctx8 = getContext(this) as common.UIAbilityContext;
     this.stageSampleVideo(ctx8, 'P8', 'test.mp4', 'out.gif');
     this.stageSampleVideo(ctx8, 'P9', 'test_rot90.mp4', 'out_rot90.gif');
+    this.stageKeying(ctx8, 'P10', 'test_key.gif', 'out_key.gif');
 
     // P4 - native child process
     try {

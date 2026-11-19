@@ -34,9 +34,14 @@ set(MS_SDK_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../sdk)
 add_library(ms_engine STATIC
   ${MS_SDK_ROOT}/src/engine/ms_inproc_exec.cpp
   ${MS_SDK_ROOT}/src/engine/ms_pipeline.cpp
+  ${MS_SDK_ROOT}/src/engine/ms_keying.cpp
+  # The keying filter string is produced by the shared, unmodified
+  # mask_builder.cpp so both platforms run byte-for-byte the same graph.
+  ${MS_SDK_ROOT}/src/gif_keying/mask_builder.cpp
 )
 target_include_directories(ms_engine PUBLIC
   ${MS_SDK_ROOT}/src/engine
+  ${MS_SDK_ROOT}/include
   ${FFMPEG_ROOT}/include
 )
 target_link_libraries(ms_engine

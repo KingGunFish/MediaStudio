@@ -31,5 +31,6 @@ napi_value GifEncodeProbe(napi_env env, napi_callback_info info);
 
 /* Implemented in pipeline_probe.cpp */
 napi_value VideoToGifProbe(napi_env env, napi_callback_info info);
+napi_value GifKeyingProbe(napi_env env, napi_callback_info info);
 
 #endif /* MSVERIFY_COMMON_H */

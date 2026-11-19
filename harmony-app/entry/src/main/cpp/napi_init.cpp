@@ -207,6 +207,7 @@ static napi_value Init(napi_env env, napi_value exports)
         {"avfilterProbe", nullptr, AvfilterProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"gifEncodeProbe", nullptr, GifEncodeProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"videoToGif", nullptr, VideoToGifProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"gifKeying", nullptr, GifKeyingProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

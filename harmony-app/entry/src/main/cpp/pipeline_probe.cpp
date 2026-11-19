@@ -13,6 +13,7 @@
 #include "verify_common.h"
 
 #include "ms_pipeline.h"
+#include "ms_keying.h"
 #include "ms_inproc_exec.h"
 
 extern "C" {
@@ -99,5 +100,46 @@ napi_value VideoToGifProbe(napi_env env, napi_callback_info info)
                       " bytes=" + std::to_string(res.file_size) +
                       " elapsedMs=" + std::to_string(start);
     LOGI("videoToGif %s", out.c_str());
+    return MakeString(env, out);
+}
+
+/**
+ * gifKeying(inputPath, outputPath)
+ *
+ * Runs the C2 keying pipeline (background keying of an animated GIF) through
+ * the production filter chain of mask_builder.cpp.
+ *
+ * Returns a single line summary:
+ *   rc=<code> inFrames=<n> frames=<n> size=<w>x<h> bytes=<n>
+ */
+napi_value GifKeyingProbe(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value argv[2] = {nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+    std::string input;
+    std::string output;
+    if (argc < 2 || !GetStringArg(env, argv[0], input) || !GetStringArg(env, argv[1], output)) {
+        napi_throw_type_error(env, nullptr, "expected (inputPath, outputPath)");
+        return nullptr;
+    }
+
+    MsKeyingOptions opts;
+    ms::keying_options_init(&opts);
+
+    ms::set_inproc_log(LogBridge, nullptr);
+    av_log_set_level(AV_LOG_WARNING);
+
+    MsKeyingResult res;
+    int rc = ms::gif_keying_inproc(input, output, opts, &res, nullptr, nullptr);
+
+    std::string out = "rc=" + std::to_string(rc) +
+                      " inFrames=" + std::to_string(res.input_frame_count) +
+                      " frames=" + std::to_string(res.output_frame_count) +
+                      " size=" + std::to_string(res.output_width) + "x" +
+                      std::to_string(res.output_height) +
+                      " bytes=" + std::to_string(res.file_size);
+    LOGI("gifKeying %s", out.c_str());
     return MakeString(env, out);
 }
