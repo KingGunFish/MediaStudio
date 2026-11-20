@@ -1563,7 +1563,8 @@ hdc -t 127.0.0.1:5557 shell 'bm dump -n xyz.demonshir.mediastudio.hm'
 2. **应用名对齐**：`AppScope/resources/base/element/string.json` 的 `app_name` 目前还是占位的 **`MS Verify`**，而隐私政策正文写的是 **「Media Studio」**。上架前必须把二者统一，否则审核会认为「隐私政策指向的应用与应用市场条目对不上」。
 3. **主体信息**：`privacy.html` 里的运营主体（`demonshir`）与联系邮箱（`demonshir@qq.com`）取自 README 的「联系」一节。上架前请按**实际的开发者/公司主体**核对一遍，隐私政策里的主体必须与 AGC 后台填的企业/开发者一致。
 4. **第三方 SDK 清单**：AGC 后台有一栏「第三方 SDK / 收集的数据」。本应用为 **0 个**，按实填写即可；随包的 FFmpeg 是**进程内动态库、不是 SDK**，且无采集行为。
-5. **弹窗截图留档**：审核期间可能要复现首启弹窗 —— 清数据即可重现（`hdc shell bm clean -n xyz.demonshir.mediastudio.hm`）。
+5. **弹窗截图留档**：审核期间可能要复现首启弹窗 —— 清数据即可重现
+   （`hdc shell bm clean -n xyz.demonshir.mediastudio.hm -d`，**`-d` 必须带**，少了只清缓存、同意记录还在，弹窗不会再出现）。实测 `clean bundle data files successfully.` 后重启，首启弹窗如期重现。
 
 ---
 
