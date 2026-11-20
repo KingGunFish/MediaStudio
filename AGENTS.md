@@ -113,6 +113,10 @@
   否则图标会被拉变形。
 - **ImageKit 的 JPEG 打包器不支持 alpha**，透明像素会被按黑色写出 —— 走 JPG
   前先用 `flattenRgba()` 按背景色压平。
+- **C6 的分层图标背景层是纯色**：鸿蒙 `media/background.png` 与 Android 的
+  `ic_launcher_background.png` 走 `IconJob.fit === 'solid'`，**只填背景色、不含
+  图像**（审核要求）。Windows 侧 `renderJob()` 是「填底色再 cover 源图」，
+  两端在这一项上**故意不一致**，Windows 侧本轮不动。
 - 缩放重采样用**预乘 alpha 上的双线性**（`drawScaledRgba`），与浏览器 canvas
   的结果构图一致、边缘锐度略有差别，这是刻意取舍。
 - 详细踩坑见 `docs/harmonyos-pc-port-architecture.md` §10.5 #25–#30、§10.12。
@@ -131,4 +135,7 @@
   `focalPoint`），焦点坐标取 `pinchCenterX` / `pinchCenterY`。
 - 2in1 模拟器**没有可用 IME**：`uitest uiInput text` 打不进 `TextInput`
   （按键事件如 Backspace 却能生效）。自动化验证走按钮路径，别把交互验证押在
-  文本输入上。
+  文本输入上。**注意**：首次拉起输入法会有「小艺输入法」隐私协议弹窗，没点
+  「同意」就没有 IME；同意之后文本能进去，但 `onChange` 要等**焦点离开**
+  （IME 提交）才触发 —— 输入后点一下别的控件再读状态。颜色类输入用纯数字
+  （`336699`，`parseHexColor` 接受不带 `#`）可避开拼音组字。

@@ -130,8 +130,10 @@ export struct IconsPage {
    *
    * 'cover' scales the source so that it fills the square and then center
    * crops it; 'safe' scales it into the centre box and leaves the rest
-   * transparent. A flattened job composites the result onto the background
-   * colour and is written as a 24 bit RGB PNG (no alpha channel at all).
+   * transparent; 'solid' paints the background colour only, which is what
+   * the store guidelines ask for from a layered background layer.
+   * A flattened job composites the result onto the background colour and is
+   * written as a 24 bit RGB PNG (no alpha channel at all).
    */
   private async renderJob(job: IconJob, bgHex: string): Promise<Uint8Array> {
     const n = job.size;
@@ -139,7 +141,10 @@ export struct IconsPage {
     const sh = this.origH;
     let pixels: Uint8Array;
 
-    if (job.fit === 'cover') {
+    if (job.fit === 'solid') {
+      const rgb = parseHexColor(bgHex);
+      pixels = composeRgba(n, n, new Uint8Array(0), 0, 0, 0, 0, 0, rgb[0], rgb[1], rgb[2], 255);
+    } else if (job.fit === 'cover') {
       const k = Math.max(n / sw, n / sh);
       const dw = Math.max(n, Math.round(sw * k));
       const dh = Math.max(n, Math.round(sh * k));

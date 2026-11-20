@@ -6,7 +6,7 @@
 
 export type Plat = 'android' | 'ios' | 'harmony';
 
-export type Fit = 'cover' | 'safe';
+export type Fit = 'cover' | 'safe' | 'solid';
 
 export type OutKind = 'png' | 'text';
 
@@ -15,7 +15,11 @@ export interface IconJob {
   rel: string;
   /** square side in px */
   size: number;
-  /** cover = fill & center-crop; safe = fit inside the center box */
+  /**
+   * cover = fill & center-crop;
+   * safe  = fit inside the center box;
+   * solid = a plain background colour, no image at all
+   */
   fit: Fit;
   /** composite onto the background colour (drops alpha) */
   flatten: boolean;
@@ -148,7 +152,7 @@ export function androidPlan(bgHex: string): OutFile[] {
   for (const entry of MIPMAP_LAYER) {
     files.push(pngFile(entry.dir + '/ic_launcher_foreground.png', entry.size, 'safe', false,
       '自适应图标前景层 ' + entry.size + 'x' + entry.size + ' (主体缩进中央 2/3 安全区)', SAFE));
-    files.push(pngFile(entry.dir + '/ic_launcher_background.png', entry.size, 'cover', true,
+    files.push(pngFile(entry.dir + '/ic_launcher_background.png', entry.size, 'solid', true,
       '自适应图标背景层 ' + entry.size + 'x' + entry.size + ' (纯色 ' + bgHex + ', 不透明)', 0));
   }
 
@@ -273,7 +277,7 @@ export function harmonyPlan(bgHex: string): OutFile[] {
 
   files.push(pngFile('media/foreground.png', 1024, 'safe', false,
     '分层图标前景层 1024x1024 (主体缩进中央安全区)', SAFE));
-  files.push(pngFile('media/background.png', 1024, 'cover', true,
+  files.push(pngFile('media/background.png', 1024, 'solid', true,
     '分层图标背景层 1024x1024 (纯色 ' + bgHex + ', 不透明, 审核硬性要求)', 0));
   files.push(pngFile('agc-store-216.png', 216, 'cover', true,
     'AppGallery 上架展示图标 216x216, PNG<=500KB', 0));

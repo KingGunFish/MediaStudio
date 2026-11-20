@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.6（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测）
-> 日期：2026-11-19
+> 版本：v1.7（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色）
+> 日期：2026-11-20
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；C6 的分层图标背景层已按审核要求改为**纯色**（v1.7）；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）**，详见 §10 验证报告
 
 ---
 
@@ -111,6 +111,19 @@ v1.6 把 **C5 图片裁剪、C6 图标生成、C7 图片转黑白** 与设置页
 | M5-h | **ImageKit 缩放语义** | — | ⚠️ **已澄清（新增 R-22）**：`desiredSize` 是**强制拉伸到目标尺寸、不保比例**；`cover`/`safe` 必须自己算目标尺寸，否则图标会被拉变形 |
 
 > **v1.6 的真正收获不在"又多了三页"**，而在于**一次把三张图片页的承载路线钉死了**：ArkUI Canvas 2D 在 PC 端并不可靠，而「ImageKit 解码 + ArkTS 像素运算 + 原生 zlib 编码」这条链路已经在 Mono / Icons / Crop 三张页上各跑通一次，且**三张页共用同一组基础设施**（`ImageIo.ets` / `Png.ets`）。后续再有图片类页面，**零新增底层代码**。
+
+### 0.7 v1.7 C6 背景层改为审核要求的纯色
+
+v1.6 的 C6 是**按 Windows 的行为**保真移植的，于是分层图标的「背景层」里装的是**图像压平**的结果（Windows 的 `renderJob()` 先填底色再把源图 cover 进去）。这与「分层图标背景层 = 纯色、不透明、无透明像素」的审核语义不符，也拿不回「纯色背景色」这个设置项的意义。经确认后改为**纯色**。
+
+| # | 验证项 | v1.6 状态 | **v1.7 实测结论** |
+|---|---|---|---|
+| M6-a | **背景层改成纯色** | 图像压平（与 Windows 一致） | ✅ **通过**：给 `IconJob.fit` 增加 **`solid`** 模式 —— `HarmonyOS/media/background.png` 与 Android 的五个 `ic_launcher_background.png` 改为**只填背景色、不含图像** |
+| M6-b | **纯色层确实是纯色** | — | ✅ **通过**：1024×1024 全部 1,048,576 个像素**颜色完全一致**、非不透明像素 = 0 |
+| M6-c | **纯色用的是用户选的颜色** | — | ✅ **通过**：把背景色改成 `#336699` 重新生成 → 产出层 **rgb(51,102,153)**、越色像素 0；预览圆圈同步变色 |
+| M6-d | **商店图标不受影响** | — | ✅ **通过**：`agc-store-1024.png` / `iOS/icon-1024.png` 仍是 cover 适配的图像，与 ffmpeg 参考图平均绝对差 **1.92**（几何未变） |
+
+> **这是本移植中第一处「两端故意不一致」**：鸿蒙侧的背景层是纯色，Windows 侧仍是图像压平。理由是**审核语义**（鸿蒙侧要求纯色）优先于**两端逐字节一致**，且 Windows 侧本轮不动（见 §10.12.5 第 2 条）。
 
 ---
 
@@ -1035,6 +1048,7 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 28 | `uitest uiInput text 200` 打不进 ArkUI `TextInput`（模拟器上没有 IME） | 2in1 模拟器没有可用输入法，**文本合成通道不通**；但按键事件（Backspace）能生效 | 自动化验证改走**按钮路径**；`tools/run-ohos-device-check.sh` 不依赖任何文本输入，真机复跑不受影响 |
 | 29 | ArkTS 编译报 `Property 'focalPoint' does not exist on type 'GestureEvent'` | `focalPoint` 定义在 `PinchGestureEvent` 上，`GestureEvent` 基类没有该字段 | 双指缩放的回调标注成 `PinchGestureEvent`，取 `pinchCenterX` / `pinchCenterY`（同为相对组件原点的 vp 坐标） |
 | 30 | ArkTS 编译报 `Argument of type '(option: SelectOption) => ResourceStr' is not assignable to parameter of type '(item: any, index: number) => string'` | `SelectOption.value` 的类型是 `ResourceStr`（`string \| Resource`），而 `ForEach` 的 key 生成器必须返回 `string` | key 生成器写 `option.value.toString()` |
+| 31 | 自动化输入框后**立刻**读状态，拿到的是旧值（颜色改了但产物还是旧颜色） | ArkUI `TextInput` 的 `onChange` 在 **IME 提交文本**之后才触发；`uitest uiInput text` 只把文字送到输入法，**提交要等焦点离开**。另外 2in1 模拟器首次拉起输入法会有**隐私协议弹窗**，没同意就没有可用 IME，文本根本进不去 | ① 模拟器上先点掉小艺输入法的「同意」弹窗；② 输入后**点一下别的控件**（比如切页签）让 IME 提交，再读状态；③ 颜色类输入尽量用**纯数字**（如 `336699`，`parseHexColor` 支持不带 `#`），避开小艺的拼音组字 |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -1428,7 +1442,8 @@ v1.1 的 P5 探针只验证了 Canvas 的**单点** `getImageData`/`putImageData
 | **前景层安全区** | 解码统计 alpha | 内容包围盒 `[170,256]..[852,767]`，**越出画布中央 2/3 安全区的像素 = 0** |
 | **背景层不透明** | 解码统计 alpha | 非不透明像素 = **0** |
 | **cover 几何正确性** | 与主机 ffmpeg 参考图对拍 | 参考 `scale=1365:1024,crop=1024:1024:170:0`，**平均绝对差 1.92**、最大 136（差异来自重采样核：ImageKit vs swscale），几何完全一致 |
-| 扁平图一致性 | 逐字节比对 | `agc-store-1024.png` 与 `iOS/icon-1024.png` 与 `media/background.png` **互相逐字节 0 差异**（同一次 cover+flatten 的产物） |
+| **背景层纯色**（v1.7 改） | 解码统计颜色与 alpha | `media/background.png` 与五个 `ic_launcher_background.png` **全图单一颜色**（与所选背景色一致）、非不透明像素 = 0 —— 符合「分层图标背景层是纯色、不含图像、不含透明」的审核要求 |
+| 扁平图一致性 | 逐字节比对 | `agc-store-1024.png` 与 `iOS/icon-1024.png` **互相逐字节 0 差异**（同一次 cover+flatten 的产物）；二者与 `background.png` **不再相同**（后者已按 v1.7 改为纯色） |
 | 预览圆形蒙版 | 解码统计 alpha | 四角 alpha = 0、中心 = 255，不透明像素占比 **0.667** ≈ π·0.46² = 0.665 —— 圆形蒙版生效 |
 | 配置文件 | 读文本 | `media/layered_image.json` 与 `Contents.json` 与 Windows 版 `JSON.stringify(..., null, 2)` 输出一致 |
 
@@ -1446,7 +1461,7 @@ v1.1 的 P5 探针只验证了 Canvas 的**单点** `getImageData`/`putImageData
 #### 10.12.5 已知差异与遗留
 
 1. **重采样核不同**：Windows 用浏览器 Canvas 的高质量缩放，本移植用 ArkTS 的**双线性（预乘 alpha 上做）**。构图、几何、alpha 合成结果一致，边缘锐度略有差别。这是刻意的取舍：Canvas 路线在 PC 端拿不到可信的整幅像素（§10.12.1）。
-2. **C6 背景层沿用 Windows 的行为**：`background.png` / `ic_launcher_background.png` 是「cover 适配后按背景色压平」的**图像**，而不是纯色块 —— 这是 Windows 版 `renderJob()` 的既有行为（注释里写「纯色」但代码是先填底色再画图），本移植按原样保真。**若要改成审核语义上的纯色背景层，只需把 `harmonyPlan()` / `androidPlan()` 里背景层的 `fit` 从 `'cover'` 改成输出纯色，Windows 侧不动。**
+2. **C6 背景层与 Windows 故意不一致（v1.7 决定）**：Windows 版的 `renderJob()` 先填底色、再把源图 cover 进去，所以它的「背景层」其实是**图像压平**的结果（注释写「纯色」但代码不是纯色）。本移植在 v1.7 起给 `IconJob.fit` 增加了 **`solid`** 模式：`HarmonyOS/media/background.png` 与 Android 的五个 `ic_launcher_background.png` 改为**只填背景色、不含图像** —— 这才是「分层图标背景层」的审核语义（纯色、不透明、无透明像素），也让「前景层 = 主体缩进安全区 + 背景层 = 纯色」的合成结果正确。**Windows 侧未做任何改动**，因此两端在这一项上输出不同：鸿蒙侧是纯色背景层，Windows 侧仍是图像压平。若要两端一致，需在 Windows 的 `renderJob()` 里同样处理 `solid`。
 3. **模拟器无法验证文本输入**：`uitest uiInput text` 在本机 2in1 模拟器上打不进 ArkUI `TextInput`（无 IME，见 §10.5 #28）。C5 的**宽/高数值输入**因此只验证了「加载时正确回填 400/300」与「非数字时报错」两条路径，**手输任意宽高的路径未在设备上跑过**（逻辑与 Mono 页共用同一套 `parseInt` + 范围校验写法）。
 4. **C5 不支持自由比例预设与「预计大小」实时估算**：Windows 版图片裁剪页也没有比例预设（那是视频裁剪页的能力），但 Windows 版有基于真实编码的体积估算；本移植只在裁剪后给出实际体积，实时估算因每次都要整幅编码而放弃。
 
@@ -1496,3 +1511,4 @@ v1.1 的 P5 探针只验证了 Canvas 的**单点** `getImageData`/`putImageData
 | v1.4 | 2026-11-19 | **完成 M3 应用界面与 C3 裁剪引擎实测**：`harmony-app/` 从单页探针变成完整应用（首页 + 视频转GIF + GIF抠图 + 视频裁剪 + 自检），新增生产 NAPI 接口 `media_api.cpp`（`napi_async_work` + 线程安全函数，Promise + 进度回调）；新增 C3 引擎 `sdk/src/engine/ms_crop.{h,cpp}`（Windows `buildFilterChain()` 的逐行移植）与 `decodeFirstFrame()`（裁剪页 WYSIWYG 预览帧来源）；**修正滤镜图提前结束被误判为失败**（新增 R-18：把 `av_buffersrc_add_frame_flags()` 的 `AVERROR_EOF` 当作 EOF）；**V5 闭环**（系统文件选择器实测通过，`.mp4` 过滤生效）；经真实界面「选文件 → 开始抠图」产出的 GIF 与 Windows 黄金件 **rgb24 3,456,000 字节 0 差异**；新增 R-17（C3 暂以 MJPEG/AVI 交付，OHOS 侧无 H.264 编码器）；新增 §10.10；踩坑速查增至 21 条 |
 | v1.5 | 2026-11-19 | **双 ABI 构建与 aarch64 真机复跑准备（R-13 收口中）**：`abiFilters` 由 `["x86_64"]` 改为 `["arm64-v8a","x86_64"]`，一次构建产出双 ABI HAP（33,707,919 B，含两套 ffmpeg 库，arm64 ELF=`0xB7`）；**按 ABI 隔离 FFmpeg 头文件**（新增 R-19：`config.h` / `libavutil/avconfig.h` 放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径、缺失即 `FATAL_ERROR`，`stage-ffmpeg-ohos.sh` 改为按 ABI 产出）；实测澄清「aarch64 侧 `ARCH_AARCH64` 也是 0」（`--disable-asm` 所致），真正分叉的只是 SIMD 特性宏；**x86_64 回归全绿**：P1–P15 通过，产物字节数与 v1.2/v1.3 基线逐字节一致，与 Windows 黄金件 **rgb24 3,456,000 与 22,118,400 字节 0 差异**；新增 `tools/run-ohos-device-check.sh`（装包→拉起→点开自检→收日志→拉产物→对拍）并在 2in1 模拟器上端到端实测；新增 §0.5 / §10.11；踩坑速查增至 24 条 |
 | v1.6 | 2026-11-19 | **图片侧四页移植（C5 / C6 / C7 + 设置页）**：定下三张图片页的共同路线 —— **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码，零新增 C++**（新增 R-20，放弃 ArkUI Canvas 路线）；新增 `common/ImageIo.ets`（ImageKit 解码含 stride 填充与 PREMUL→UNPREMUL 归一、`cropRgba`/`composeRgba`/`flattenRgba`/`drawScaledRgba`、JPEG/WebP 打包）、`common/Png.ets`（色型 2/6）、`common/Mono1bpp.ets`、`common/AppIcons.ets`、`common/CropMath.ets`（后三者为 Windows 侧 `mono1bpp.ts` / `appicons.ts` / `cropMath.ts` 的逐行移植）与 `pages/Mono.ets`、`pages/Icons.ets`、`pages/Crop.ets`、`pages/Settings.ets`；**2in1 实测**：C7 产出 1-bit BMP 15,662 B（与理论值精确吻合）；C6 三平台共 **41 个文件**，前景层内容越出中央 2/3 安全区的像素 = 0，扁平图一律 RGB 无 alpha，背景层与主机 ffmpeg 参考图平均绝对差 1.92；C5 默认画布裁剪与原图**逐字节 0 差异**，放大 125% 后与 ffmpeg 参考平均绝对差 2.33，PNG/JPG/WebP 三档格式均产出正确尺寸；新增 R-21（JPEG 打包器把透明变黑 → 先压平）、R-22（`desiredSize` 强制拉伸 → 自己算目标尺寸）；新增 §0.6 / §10.12；踩坑速查增至 30 条 |
+| v1.7 | 2026-11-20 | **C6 分层图标背景层改为审核要求的纯色**：给 `IconJob.fit` 增加 **`solid`** 模式，`HarmonyOS/media/background.png` 与 Android 五个 `ic_launcher_background.png` 由「图像压平」改为**只填背景色、不含图像**（Windows 的 `renderJob()` 先填底色再 cover 源图，与「背景层 = 纯色」的审核语义不符）；**2in1 实测**：1024×1024 背景层全部 1,048,576 像素颜色完全一致、非不透明像素 0；把背景色改成 `#336699` 重新生成 → 产出层为 **rgb(51,102,153)**、越色像素 0，预览圆圈同步变色；商店图标 `agc-store-1024.png` / `iOS/icon-1024.png` 仍是 cover 适配的图像（与 ffmpeg 参考平均绝对差 1.92，几何未变）。**这是本移植第一处「两端故意不一致」** —— 审核语义优先于两端逐字节一致，Windows 侧本轮不动；新增 §0.7；踩坑速查增至 31 条 |
