@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.7（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色）
+> 版本：v1.8（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色 + 上架隐私合规）
 > 日期：2026-11-20
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；C6 的分层图标背景层已按审核要求改为**纯色**（v1.7）；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；C6 的分层图标背景层已按审核要求改为**纯色**（v1.7）；**上架隐私合规已落地**（v1.8）：首启隐私弹窗（未同意不构建任何功能页）、设置页「数据和隐私」、本地预置 H5 隐私政策、可撤回同意，**权限清单核对为「零权限」**（HAP 内无 `requestPermissions`，系统 `bm dump` 为空）；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13），**上架前还差公网隐私政策 URL 与应用名对齐（R-23）**，详见 §10 验证报告
 
 ---
 
@@ -124,6 +124,25 @@ v1.6 的 C6 是**按 Windows 的行为**保真移植的，于是分层图标的�
 | M6-d | **商店图标不受影响** | — | ✅ **通过**：`agc-store-1024.png` / `iOS/icon-1024.png` 仍是 cover 适配的图像，与 ffmpeg 参考图平均绝对差 **1.92**（几何未变） |
 
 > **这是本移植中第一处「两端故意不一致」**：鸿蒙侧的背景层是纯色，Windows 侧仍是图像压平。理由是**审核语义**（鸿蒙侧要求纯色）优先于**两端逐字节一致**，且 Windows 侧本轮不动（见 §10.12.5 第 2 条）。
+
+### 0.8 v1.8 上架隐私合规（首启弹窗 + 数据和隐私 + 本地 H5 隐私政策）
+
+v1.7 对齐的是**素材**的审核语义，v1.8 处理的是**应用本体**的合规面：应用市场上架要求「首次使用必须弹出隐私声明、未同意不得使用」，隐私政策必须是**独立文本**（不能藏在用户协议里），应用内要有**可查看入口**，且「申请的权限」与「实际使用」必须一致。
+
+| # | 验证项 | v1.7 状态 | **v1.8 实测结论** |
+|---|---|---|---|
+| P1 | **首启弹隐私弹窗** | 无 | ✅ **通过**：首次启动弹出「隐私政策」卡片（半透明遮罩 + 四条摘要 + 「《隐私政策》全文」链接 + **「不同意并退出」** / **「同意并继续」**）。**无勾选框、无默认勾选**，两个按钮都必须用户主动点 |
+| P2 | **未同意不得使用** | 功能页可直接进入 | ✅ **通过**：同意状态不是「granted」时**根本不构建任何功能页**（ArkUI 的 `if` 分支为假时组件不会被构造），页面上只有那张遮罩卡片 |
+| P3 | **同意状态落盘** | — | ✅ **通过**：`preferences` 落盘「同意 + 政策版本号」。实测：同意后 `aa force-stop` 再启动，**不再弹窗**；版本号与当前版本不一致即视为未同意（政策改版会自动重新征求） |
+| P4 | **必须有拒绝路径** | — | ✅ **通过**：「不同意并退出」→ 页面锁死为「未同意隐私政策」状态（只剩「退出应用」）→ `terminateSelf()` 退出；再次启动**仍弹窗** |
+| P5 | **设置页「数据和隐私」** | 纯静态「关于」页 | ✅ **通过**：「设置 → 数据和隐私」卡片 —— 三条合规摘要 + **当前同意状态**（已同意 / 未同意 / 政策版本号）+ 「查看隐私政策」按钮 |
+| P6 | **本地预置的 H5 隐私政策** | 无 | ✅ **通过**：`entry/src/main/resources/rawfile/privacy.html`（9,373 B，**单文件、零外部依赖、无脚本**），由 ArkWeb 以 `resource://rawfile/privacy.html` 加载。实测 hilog：`[WebNavigation] OnPageEnd httpStatusCode:200`、`net_error=0` |
+| P7 | **可撤回同意** | — | ✅ **通过**：隐私政策页底部「撤回隐私同意」→ 删记录 → `router.back()` → 首页 `onPageShow` 重读状态 → **首启弹窗重新出现**，必须重新同意才能继续用 |
+| P8 | **权限清单核对** | `module.json5` 无 `requestPermissions` | ✅ **通过（保持零权限）**：HAP 内 `module.json` **无 `requestPermissions` 字段**；系统侧 `bm dump` 为 `reqPermissions: []` / `reqPermissionStates: []` / `permissions: []` / `defPermissions: []` |
+
+> **零权限是本应用最强的合规论据**：审核最容易踩的「过度申请」和「权限用途含糊」两类驳回点，本应用**一个都不会触发** —— 因为它一个权限都不申请。代价是必须把这一点在隐私政策里**写清楚**（否则审核会认为「没写权限 = 漏写」），所以 `privacy.html` 第三节用表格逐项列出「不申请 + 原因」。
+>
+> **本地 H5 不能替代公网地址**：AGC 后台要填的隐私政策 URL 必须是**公网可访问的 HTTPS 地址**，应用内的 `resource://rawfile` 副本只是应用内兜底。同一份 `privacy.html` 是零依赖单文件，可原样部署到任意静态托管（见 §10.13.4）。
 
 ---
 
@@ -837,6 +856,7 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | **R-20** | **ArkUI Canvas 2D 撑不起图片类页面**（v1.1 只验证了单点像素读写，整幅像素搬运在 PC 端不可信） | 中 | — | 放弃 Canvas 路线，改用 **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码**，三张图片页共用同一套基础设施（见 §10.12.1） | ✅ **新增并已解决**（v1.6） |
 | **R-21** | **ImageKit 的 JPEG 打包器不支持 alpha**（透明像素会被按黑色写出） | 中 | 高 | 走 JPG 前先用 `flattenRgba()` 按背景色压平；WebP/PNG 保留 alpha（见 §10.5 #27） | ✅ **新增并已解决**（v1.6） |
 | **R-22** | **ImageKit 的 `desiredSize` 强制拉伸到目标尺寸、不保比例**（直接传目标尺寸会把图标拉变形） | 中 | 中 | `cover` / `safe` 两种适配各自算出**保持比例**的目标尺寸再交给 ImageKit（见 §10.5 #26、§10.12.3） | ✅ **新增并已解决**（v1.6） |
+| **R-23** | **上架审核只做了一半**：应用内的首启弹窗、数据和隐私入口、本地 H5 政策都已落地，但 **AGC 后台要填的「公网隐私政策 URL」还没有**；同时 `app_name` 仍是占位的 `MS Verify`，与政策正文里的「Media Studio」对不上 | 中 | **高**（直接卡上架） | 把 `privacy.html`（零依赖单文件）原样部署到静态托管拿 HTTPS 地址；把 `app_name` 改成最终应用名并同步政策正文；核对政策里的运营主体与 AGC 后台企业/开发者一致（见 §10.13.4） | ⚠️ **新增，待人工完成**（v1.8）—— 应用侧代码已闭环 |
 
 ---
 
@@ -1049,6 +1069,11 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 29 | ArkTS 编译报 `Property 'focalPoint' does not exist on type 'GestureEvent'` | `focalPoint` 定义在 `PinchGestureEvent` 上，`GestureEvent` 基类没有该字段 | 双指缩放的回调标注成 `PinchGestureEvent`，取 `pinchCenterX` / `pinchCenterY`（同为相对组件原点的 vp 坐标） |
 | 30 | ArkTS 编译报 `Argument of type '(option: SelectOption) => ResourceStr' is not assignable to parameter of type '(item: any, index: number) => string'` | `SelectOption.value` 的类型是 `ResourceStr`（`string \| Resource`），而 `ForEach` 的 key 生成器必须返回 `string` | key 生成器写 `option.value.toString()` |
 | 31 | 自动化输入框后**立刻**读状态，拿到的是旧值（颜色改了但产物还是旧颜色） | ArkUI `TextInput` 的 `onChange` 在 **IME 提交文本**之后才触发；`uitest uiInput text` 只把文字送到输入法，**提交要等焦点离开**。另外 2in1 模拟器首次拉起输入法会有**隐私协议弹窗**，没同意就没有可用 IME，文本根本进不去 | ① 模拟器上先点掉小艺输入法的「同意」弹窗；② 输入后**点一下别的控件**（比如切页签）让 IME 提交，再读状态；③ 颜色类输入尽量用**纯数字**（如 `336699`，`parseHexColor` 支持不带 `#`），避开小艺的拼音组字 |
+| 32 | 弹窗遮罩**完全看不见**（白底卡片浮在白底页面上），但 `hitTestBehavior` 生效、点击被挡住 | **ArkUI 的 8 位色是 `#AARRGGBB`（alpha 在前）**，不是 CSS 的 `#RRGGBBAA`。`#00000066` 被解析成「**全透明** + 深蓝」，于是遮罩等于没画 | 半透明黑要用 `#66000000`（AA=0x66，RRGGBB=000000）。同理 `#00000000` 两边解释一致（都全透明），所以旧代码没暴露问题 |
+| 33 | ArkWeb 打开 `resource://rawfile/xxx.html` 后**一片空白**，日志却是 `OnPageEnd httpStatusCode:200` / `net_error=0`，无障碍树里 DOM 也**完整存在** | **不是加载失败**，是**首帧没画出来**：第一次拉起 ArkWeb 要另起渲染进程（hilog 有 `CheckProcessLoadingCompleted ... :render:not loading Completed`），2in1 模拟器软件渲染下首帧可能延迟几十秒 | ① 用 `uitest dumpLayout` 看无障碍树：**DOM 在 + 坐标对** = 渲染问题不是加载问题；② 页面加 `LoadingProgress` 加载提示，`onPageEnd` 再撤掉；③ 别把这个现象误判成「需要加 INTERNET 权限」 |
+| 34 | 照抄 ArkWeb 最佳实践调 `webController.destroy()`，编译报「不存在此方法」 | **API 12（`compatibleSdkVersion 5.0.0(12)`）的 `WebviewController` 没有 `destroy()`**；该接口是更晚版本才加的。官方行为是**页面销毁 `aboutToDisappear` 阶段 Web 组件自动解绑控制器、销毁 JS 运行环境** | 什么都不调，让框架自己回收。也不要手动 `stop()`（会打断正在进行的加载） |
+| 35 | 构建报 `'pushUrl' has been deprecated` / `'back' has been deprecated` / `'showToast' has been deprecated` | 新版 SDK 把 `@ohos.router` / `promptAction` 标了 `@deprecated`，推荐换 `Navigation` / `NavPathStack` / `UIContext.getPromptAction()` | 本工程 `compatibleSdkVersion` 是 **5.0.0(12)**，这些 API 在 API 12 上功能正常，**只是 WARN 不阻塞构建**。为了赶审核不重做导航体系；等真要升到 API 18+ 再整体迁移 |
+| 36 | 以为「首启弹窗 = 在应用上盖一层遮罩」就够了 | 遮罩只是**视觉**拦截；功能页如果已经在 `if` 之外被构建，其 `aboutToAppear` 早就跑过了 —— 审核要的是「同意前不得初始化、不得采集」 | 用状态机**不构建功能页**：`if (consent === 'granted') { 整个应用本体 }`，ArkUI 的 `if` 分支为假时组件不会被构造，业务代码一次都不会执行 |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -1467,6 +1492,81 @@ v1.1 的 P5 探针只验证了 Canvas 的**单点** `getImageData`/`putImageData
 
 ---
 
+### 10.13 上架隐私合规端到端实测（v1.8 新增）
+
+#### 10.13.1 落地形态
+
+| 位置 | 文件 | 作用 |
+|---|---|---|
+| 同意状态 | `harmony-app/entry/src/main/ets/common/Privacy.ets` | `preferences` 落盘「同意 + 政策版本号」；`isAccepted` / `accept` / `revoke` 三个函数 |
+| 首启闸门 | `harmony-app/entry/src/main/ets/pages/Index.ets` | `consent` 状态机（`pending` / `needed` / `granted` / `declined`）+ `privacyGate()` 卡片 |
+| 政策全文 | `harmony-app/entry/src/main/resources/rawfile/privacy.html` | 单文件 H5，零外部依赖、无脚本、无网络请求 |
+| 承载页 | `harmony-app/entry/src/main/ets/pages/Privacy.ets` | ArkWeb（`resource://rawfile/privacy.html`）+ 撤回同意 + 加载/失败提示 |
+| 入口 | `harmony-app/entry/src/main/ets/pages/Settings.ets` | 「数据和隐私」卡片 + 当前同意状态 |
+| 路由 | `harmony-app/entry/src/main/resources/base/profile/main_pages.json` | 注册 `pages/Privacy` |
+
+**同意状态机**（`Index.ets`）：
+
+```
+pending  ──读到记录──►  granted  ──▶ 渲染应用本体（Row + 侧栏 + 功能页）
+   │
+   └──没读到/版本不符──► needed  ──▶ 只渲染遮罩卡片，功能页一个都不构建
+                                │
+                                └──「不同意并退出」──► declined ──▶ 只剩「退出应用」
+```
+
+关键点：**闸门不是「盖一层遮罩」，而是「不构建功能页」**。ArkUI 的 `if` 分支在条件为假时组件根本不会被构造，因此用户同意之前，视频解码、GIF 抠图等任何业务代码都**没有执行过一次** —— 这比「遮住但已在后台跑」在合规上强得多，也更容易向审核解释。
+
+#### 10.13.2 2in1 模拟器实测记录
+
+环境：HarmonyOS 2in1 模拟器 `127.0.0.1:5557`，双 ABI debug HAP，`aa start -b xyz.demonshir.mediastudio.hm -a EntryAbility`。
+
+| 步骤 | 操作 | 实测结果 |
+|---|---|---|
+| 1 | 全新安装后首次启动 | 弹出「隐私政策」卡片：遮罩（半透明黑）+ 标题 + 摘要 6 行 + 「《隐私政策》全文」链接 + 「不同意并退出」/「同意并继续」 |
+| 2 | 点「《隐私政策》全文」 | 跳转到 `pages/Privacy`，ArkWeb 加载 `resource://rawfile/privacy.html`。hilog：`[WebNavigation] LoadUrl url:resource://rawfile/...` → `ResourceURLLoader ... path: resources/rawfile/privacy.html` → `OnPageEnd httpStatusCode:200` / `net_error=0` |
+| 3 | 无障碍树核对 | DOM **完整解析并布局**：`Media Studio 隐私政策`、`政策版本：v1`、`生效日期：2026 年 11 月 20 日`、十二个小节标题、`权限` 表格等节点全部带正确 `bounds` |
+| 4 | 返回 | 回到闸门卡片，**仍在**（未被绕过） |
+| 5 | 点「同意并继续」 | 卡片消失，应用本体渲染：侧栏 9 个导航项 + 首页九宫格全部出现 |
+| 6 | `aa force-stop` 后重启 | **不再弹窗** —— `preferences` 记录生效 |
+| 7 | 设置 → 数据和隐私 | 卡片显示「当前隐私同意状态：已同意（政策版本 v1）」+「查看隐私政策」按钮 |
+| 8 | 隐私政策页 → 「撤回隐私同意」 | 记录被删除，`router.back()` 回首页，首页 `onPageShow` 重读 → **首启弹窗重新出现** |
+| 9 | 点「不同意并退出」 | 页面变为「未同意隐私政策」+「退出应用」，同意/不同意按钮都消失 |
+| 10 | 点「退出应用」 → 再次启动 | 应用已退出；再启动**仍然弹窗**（因为没有同意记录） |
+
+#### 10.13.3 权限核对（零权限）
+
+两条独立证据：
+
+```powershell
+# 证据一：HAP 内最终 module.json 没有 requestPermissions 字段
+#   → module 顶层键：virtualMachine, mainElement, installationFree, deliveryWithInstall,
+#     description, compileMode, type, dependencies, abilities, deviceTypes, pages,
+#     descriptionId, name, packageName
+#   → 没有 requestPermissions
+
+# 证据二：系统侧记录
+hdc -t 127.0.0.1:5557 shell 'bm dump -n xyz.demonshir.mediastudio.hm'
+#   → "reqPermissions": []   "reqPermissionStates": []
+#   → "permissions": []       "defPermissions": []
+```
+
+**因此：加载本地 H5 隐私政策不需要 `ohos.permission.INTERNET`。** ArkWeb 的 `INTERNET` 权限只在加载**网络地址**时才需要，`resource://rawfile` 属于应用包内资源。实测页面返回 200 且 `net_error=0`，全程零权限。
+
+> **反过来说**：一旦以后加了「在线隐私政策 URL」或任何联网能力，就必须同步在 `module.json5` 补 `requestPermissions`（含 `reason`），并同步更新 `privacy.html` 第三节的权限表格 —— 两边不一致就是「过度申请」或「漏报」驳回点。
+
+#### 10.13.4 上架前仍需人工完成的事
+
+本地合规代码只覆盖「应用内」的部分，AGC 后台侧还有几件机器做不了的事：
+
+1. **公网隐私政策 URL**：把 `harmony-app/entry/src/main/resources/rawfile/privacy.html` 原样上传到任意静态托管（文件零外部依赖，直接放就行），拿到 HTTPS 地址填进 AGC 后台。**必须公网可访问**，不能填 `resource://`。
+2. **应用名对齐**：`AppScope/resources/base/element/string.json` 的 `app_name` 目前还是占位的 **`MS Verify`**，而隐私政策正文写的是 **「Media Studio」**。上架前必须把二者统一，否则审核会认为「隐私政策指向的应用与应用市场条目对不上」。
+3. **主体信息**：`privacy.html` 里的运营主体（`demonshir`）与联系邮箱（`demonshir@qq.com`）取自 README 的「联系」一节。上架前请按**实际的开发者/公司主体**核对一遍，隐私政策里的主体必须与 AGC 后台填的企业/开发者一致。
+4. **第三方 SDK 清单**：AGC 后台有一栏「第三方 SDK / 收集的数据」。本应用为 **0 个**，按实填写即可；随包的 FFmpeg 是**进程内动态库、不是 SDK**，且无采集行为。
+5. **弹窗截图留档**：审核期间可能要复现首启弹窗 —— 清数据即可重现（`hdc shell bm clean -n xyz.demonshir.mediastudio.hm`）。
+
+---
+
 ## 附录 A：能力搬运映射表（逐文件）
 
 | 源文件 | 行数 | 去向 | 改造类型 |
@@ -1512,3 +1612,4 @@ v1.1 的 P5 探针只验证了 Canvas 的**单点** `getImageData`/`putImageData
 | v1.5 | 2026-11-19 | **双 ABI 构建与 aarch64 真机复跑准备（R-13 收口中）**：`abiFilters` 由 `["x86_64"]` 改为 `["arm64-v8a","x86_64"]`，一次构建产出双 ABI HAP（33,707,919 B，含两套 ffmpeg 库，arm64 ELF=`0xB7`）；**按 ABI 隔离 FFmpeg 头文件**（新增 R-19：`config.h` / `libavutil/avconfig.h` 放进 `include/<abi>/` 覆盖层，CMake 用 `${OHOS_ARCH}` 选路径、缺失即 `FATAL_ERROR`，`stage-ffmpeg-ohos.sh` 改为按 ABI 产出）；实测澄清「aarch64 侧 `ARCH_AARCH64` 也是 0」（`--disable-asm` 所致），真正分叉的只是 SIMD 特性宏；**x86_64 回归全绿**：P1–P15 通过，产物字节数与 v1.2/v1.3 基线逐字节一致，与 Windows 黄金件 **rgb24 3,456,000 与 22,118,400 字节 0 差异**；新增 `tools/run-ohos-device-check.sh`（装包→拉起→点开自检→收日志→拉产物→对拍）并在 2in1 模拟器上端到端实测；新增 §0.5 / §10.11；踩坑速查增至 24 条 |
 | v1.6 | 2026-11-19 | **图片侧四页移植（C5 / C6 / C7 + 设置页）**：定下三张图片页的共同路线 —— **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码，零新增 C++**（新增 R-20，放弃 ArkUI Canvas 路线）；新增 `common/ImageIo.ets`（ImageKit 解码含 stride 填充与 PREMUL→UNPREMUL 归一、`cropRgba`/`composeRgba`/`flattenRgba`/`drawScaledRgba`、JPEG/WebP 打包）、`common/Png.ets`（色型 2/6）、`common/Mono1bpp.ets`、`common/AppIcons.ets`、`common/CropMath.ets`（后三者为 Windows 侧 `mono1bpp.ts` / `appicons.ts` / `cropMath.ts` 的逐行移植）与 `pages/Mono.ets`、`pages/Icons.ets`、`pages/Crop.ets`、`pages/Settings.ets`；**2in1 实测**：C7 产出 1-bit BMP 15,662 B（与理论值精确吻合）；C6 三平台共 **41 个文件**，前景层内容越出中央 2/3 安全区的像素 = 0，扁平图一律 RGB 无 alpha，背景层与主机 ffmpeg 参考图平均绝对差 1.92；C5 默认画布裁剪与原图**逐字节 0 差异**，放大 125% 后与 ffmpeg 参考平均绝对差 2.33，PNG/JPG/WebP 三档格式均产出正确尺寸；新增 R-21（JPEG 打包器把透明变黑 → 先压平）、R-22（`desiredSize` 强制拉伸 → 自己算目标尺寸）；新增 §0.6 / §10.12；踩坑速查增至 30 条 |
 | v1.7 | 2026-11-20 | **C6 分层图标背景层改为审核要求的纯色**：给 `IconJob.fit` 增加 **`solid`** 模式，`HarmonyOS/media/background.png` 与 Android 五个 `ic_launcher_background.png` 由「图像压平」改为**只填背景色、不含图像**（Windows 的 `renderJob()` 先填底色再 cover 源图，与「背景层 = 纯色」的审核语义不符）；**2in1 实测**：1024×1024 背景层全部 1,048,576 像素颜色完全一致、非不透明像素 0；把背景色改成 `#336699` 重新生成 → 产出层为 **rgb(51,102,153)**、越色像素 0，预览圆圈同步变色；商店图标 `agc-store-1024.png` / `iOS/icon-1024.png` 仍是 cover 适配的图像（与 ffmpeg 参考平均绝对差 1.92，几何未变）。**这是本移植第一处「两端故意不一致」** —— 审核语义优先于两端逐字节一致，Windows 侧本轮不动；新增 §0.7；踩坑速查增至 31 条 |
+| v1.8 | 2026-11-20 | **上架隐私合规（首启弹窗 + 数据和隐私 + 本地 H5 隐私政策）**：新增 `common/Privacy.ets`（`preferences` 落盘「同意 + 政策版本号」，版本变更即重新征求）、`resources/rawfile/privacy.html`（9,373 B 单文件 H5，零外部依赖、无脚本）、`pages/Privacy.ets`（ArkWeb 承载 + 撤回同意 + 加载/失败提示）；`Index.ets` 改为**同意状态机**驱动的首启闸门 —— 未同意时**不构建任何功能页**（ArkUI `if` 分支为假时组件不构造，业务代码一次都不跑），弹窗含遮罩 + 摘要 + 「《隐私政策》全文」链接 + 「不同意并退出」/「同意并继续」（**无默认勾选**）；`Settings.ets` 增加「数据和隐私」卡片与当前同意状态；`main_pages.json` 注册 `pages/Privacy`。**2in1 实测**：首启弹窗 → H5 加载（hilog `OnPageEnd httpStatusCode:200` / `net_error=0`，无障碍树 DOM 完整）→ 返回闸门仍在 → 同意后放行 → `force-stop` 重启不再弹（持久化生效）→ 设置页可见同意状态 → 撤回同意后弹窗重现 → 不同意则锁死并退出、再启动仍弹窗。**权限核对为「零权限」**：HAP 内 `module.json` 无 `requestPermissions` 字段，系统 `bm dump` 为 `reqPermissions: []`；据此确认**加载本地 rawfile 不需要 INTERNET 权限**。新增 §0.8 / §10.13；踩坑速查增至 36 条（新增 ArkUI 的 8 位色是 **AARRGGBB**、ArkWeb 首帧延迟≠加载失败、API 12 无 `WebviewController.destroy()`、router 的 deprecation 只是 WARN、闸门要「不构建」而非「盖遮罩」） |

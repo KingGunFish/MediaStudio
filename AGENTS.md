@@ -139,3 +139,37 @@
   「同意」就没有 IME；同意之后文本能进去，但 `onChange` 要等**焦点离开**
   （IME 提交）才触发 —— 输入后点一下别的控件再读状态。颜色类输入用纯数字
   （`336699`，`parseHexColor` 接受不带 `#`）可避开拼音组字。
+- **ArkUI 的 8 位色是 `#AARRGGBB`（alpha 在前）**，不是 CSS 的 `#RRGGBBAA`。
+  半透明黑要写 `#66000000`；写 `#00000066` 会得到「全透明 + 深蓝」，遮罩等于
+  没画（点击却仍被 `hitTestBehavior` 挡住，极难自查）。
+
+### 鸿蒙上架隐私合规：首启闸门 + 本地 H5 政策
+
+- **首启弹窗要做成「状态机闸门」，不是「盖一层遮罩」**：
+  `Index.ets` 用 `consent`（`pending` / `needed` / `granted` / `declined`）驱动，
+  **只有 `granted` 才构建应用本体**。ArkUI 的 `if` 分支为假时组件根本不构造，
+  于是用户同意前业务代码一次都没跑过 —— 这才是审核要的「未同意不得初始化」。
+  遮罩只是视觉层，拦不住已经在后台跑起来的页面。
+- **弹窗要素**：无勾选框、无默认勾选、必须有「同意」与「不同意」两条明确路径；
+  不同意要给出可退出的落点（锁定状态 + 「退出应用」），不能把用户困住。
+- **同意状态落盘**：`common/Privacy.ets` 用 `preferences` 存「同意 + 政策版本号」。
+  版本号与当前 `PRIVACY_VERSION` 不一致即视为未同意 —— 政策改版会自动重新征求，
+  不用改代码。
+- **撤回同意**：隐私政策页底部「撤回隐私同意」→ 删记录 → `router.back()` →
+  首页 `onPageShow` 重读 → 首启弹窗重新出现。别在撤回后直接杀进程。
+- **本地 H5 政策放 `resources/rawfile/`**，用 ArkWeb 以
+  `resource://rawfile/xxx.html` 加载。**加载本地 rawfile 不需要
+  `ohos.permission.INTERNET`**（该权限只在加载网络地址时才需要；实测
+  `OnPageEnd httpStatusCode:200` / `net_error=0`）。所以本应用保持**零权限**：
+  HAP 内 `module.json` 无 `requestPermissions`，系统 `bm dump` 为 `reqPermissions: []`。
+  **一旦加联网能力，必须同步补权限声明 + 同步改 `privacy.html` 的权限表格**，
+  两边不一致就是「过度申请」或「漏报」驳回点。
+- **ArkWeb 首帧延迟 ≠ 加载失败**：第一次拉起 ArkWeb 要另起渲染进程，模拟器上
+  首帧可能等几十秒。判断方法：`uitest dumpLayout` 看无障碍树 —— **DOM 在且坐标对**
+  就是渲染慢，不是加载失败。页面要加 `LoadingProgress`，`onPageEnd` 再撤掉。
+- **API 12 的 `WebviewController` 没有 `destroy()`**（那是更晚版本才加的）；
+  页面销毁时框架自动解绑控制器、销毁 JS 运行环境。别照抄新版本文章。
+- **AGC 后台要填的隐私政策 URL 必须公网可访问（HTTPS）**，应用内的
+  `resource://rawfile` 只是兜底。把同一份 `privacy.html`（零依赖单文件）
+  原样部署到静态托管即可。
+- 详见 `docs/harmonyos-pc-port-architecture.md` §0.8、§10.13、§10.5 #32–#36。

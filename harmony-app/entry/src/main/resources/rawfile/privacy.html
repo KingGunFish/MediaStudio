@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Media Studio 隐私政策</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 22px 18px 48px;
+    font-family: -apple-system, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.78;
+    color: #1f2329;
+    background: #ffffff;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 {
+    font-size: 16px;
+    margin: 28px 0 8px;
+    padding-left: 10px;
+    border-left: 3px solid #2f6fed;
+  }
+  h3 { font-size: 14px; margin: 16px 0 4px; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+  th, td { border: 1px solid #d8dce3; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f4f6f9; font-weight: 600; }
+  .meta { font-size: 13px; color: #646a73; margin: 0 0 4px; }
+  .card { background: #f4f6f9; border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+  .card p:first-child { margin-top: 0; }
+  .card p:last-child { margin-bottom: 0; }
+  .note { font-size: 13px; color: #646a73; }
+  a { color: #2f6fed; }
+  .footer {
+    margin-top: 32px;
+    padding-top: 14px;
+    border-top: 1px solid #e4e7ec;
+    font-size: 13px;
+    color: #646a73;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e6e8eb; background: #101215; }
+    th { background: #1e2227; }
+    th, td { border-color: #33383f; }
+    .card { background: #1e2227; }
+    .meta, .note, .footer { color: #9aa0a8; }
+    .footer { border-top-color: #33383f; }
+    a { color: #7aa7ff; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Media Studio 隐私政策</h1>
+<p class="meta">政策版本：v1</p>
+<p class="meta">生效日期：2026 年 11 月 20 日</p>
+
+<div class="card">
+  <p><strong>一句话概括：</strong>Media Studio 是一款纯本地的视频 / 图片处理工具。
+  所有处理都在您的设备上完成，<strong>本应用不收集任何个人信息、不申请任何系统权限、
+  不接入任何第三方 SDK，也不会联网传输您的任何数据。</strong></p>
+</div>
+
+<h2>一、适用范围与主体信息</h2>
+<p>本隐私政策适用于「Media Studio」（下称「本应用」）在 HarmonyOS PC / 2in1 设备上提供的全部功能，
+包括视频转 GIF、GIF 抠图、视频裁剪、图片转黑白、图片裁剪与图标生成功能。</p>
+<ul>
+  <li><strong>运营主体：</strong>demonshir</li>
+  <li><strong>联系邮箱：</strong><a href="mailto:demonshir@qq.com">demonshir@qq.com</a></li>
+  <li><strong>适用范围：</strong>仅限本应用在本机运行的场景，不含任何在线服务。</li>
+</ul>
+
+<h2>二、我们如何收集和使用个人信息</h2>
+<p><strong>本应用不收集个人信息。</strong>具体而言，本应用：</p>
+<ul>
+  <li>不要求您注册或登录，没有账号体系，不收集手机号、邮箱、用户名等标识信息；</li>
+  <li>不读取设备标识（如 OAID / 广告标识）、IMEI、系统序列号等设备唯一标识；</li>
+  <li>不收集您的位置信息，不读取通讯录、日历、短信、通话记录、相册以外的系统数据；</li>
+  <li>不收集您的剪贴板内容、不采集麦克风或摄像头音视频、不获取传感器数据；</li>
+  <li>不收集崩溃日志、行为埋点、点击事件等任何用于统计分析的数据。</li>
+</ul>
+<p>本应用仅在您主动使用功能时，对<strong>您亲手选定的那一个文件</strong>进行处理：
+文件选择器由系统提供，本应用只获得该文件的临时读取授权，读取后立即复制到应用沙箱，
+处理完成后再写出结果文件。整个过程不需要您提供任何额外信息。</p>
+
+<h2>三、我们申请的权限</h2>
+<p><strong>本应用不申请任何系统权限。</strong>安装清单中不包含任何 <code>requestPermissions</code> 条目，
+因此不会向系统申请网络、存储、相机、麦克风、位置、通讯录等任何权限，
+也不会弹出任何权限申请对话框。</p>
+<table>
+  <thead>
+    <tr><th>权限</th><th>是否申请</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>网络访问（INTERNET）</td><td>否</td><td>本应用不含任何联网逻辑</td></tr>
+    <tr><td>文件读写（媒体库 / 外部存储）</td><td>否</td><td>只读写应用沙箱目录，由系统文件选择器授予单文件访问</td></tr>
+    <tr><td>相机 / 麦克风</td><td>否</td><td>不涉及</td></tr>
+    <tr><td>位置 / 通讯录 / 日历 / 电话</td><td>否</td><td>不涉及</td></tr>
+    <tr><td>通知 / 后台任务 / 设备标识</td><td>否</td><td>不涉及</td></tr>
+  </tbody>
+</table>
+<p class="note">说明：应用内展示的隐私政策页面通过本地内置的静态网页渲染，
+文件随安装包一并分发，不需要网络权限。</p>
+
+<h2>四、第三方 SDK 与第三方组件</h2>
+<p><strong>本应用未集成任何第三方 SDK</strong>，也没有接入任何广告、统计、推送、
+登录、支付或社交分享 SDK，不存在第三方 SDK 收集个人信息的情形。</p>
+<p>本应用随包分发的唯一第三方组件是 FFmpeg（LGPL v3 授权的动态库），
+它以进程内库的方式被调用，只在本进程内完成音视频解码与编码，
+不包含任何网络请求、设备标识读取或数据上传逻辑。
+应用源码以 MIT 协议开源。</p>
+
+<h2>五、我们如何存储和保护个人信息</h2>
+<p>由于本应用不收集个人信息，因此<strong>不存在个人信息的存储问题</strong>。</p>
+<p>本应用在设备上仅保存以下两类本地数据：</p>
+<ul>
+  <li><strong>您选择的素材与处理结果：</strong>位于应用沙箱目录（<code>/data/storage/el2/base/haps/entry/files/</code>），
+  由本应用在您主动选择文件时写入，页面会显示完整路径供您取用。</li>
+  <li><strong>隐私同意记录：</strong>一条不含个人信息的标记，记录您同意的隐私政策版本号，
+  用于在后续启动时跳过重复弹窗。</li>
+</ul>
+<p>这些数据全部保存在您的设备本地，应用不会将其上传、同步或备份到任何服务器。
+<strong>卸载本应用会连同沙箱数据一并清除</strong>；您也可以随时在文件管理器中手动删除上述文件。</p>
+
+<h2>六、我们如何传输您的数据</h2>
+<p><strong>本应用不进行任何网络传输。</strong>本应用不含网络请求代码、不含服务器地址、
+不含数据上报逻辑，所有数据处理与结果输出均在本机完成。</p>
+
+<h2>七、我们如何共享、转让、公开披露个人信息</h2>
+<p>本应用不收集个人信息，因此不存在共享、转让或公开披露个人信息的情形。
+本应用也不会将您的文件内容提供给任何第三方。</p>
+
+<h2>八、Cookie 与本地存储</h2>
+<p>本应用内的隐私政策页面是一个随安装包分发的本地静态网页，
+不设置任何 Cookie、不使用 localStorage / IndexedDB 等浏览器存储。
+应用自身仅使用一条如上所述的隐私同意记录。</p>
+
+<h2>九、我们如何处理未成年人的个人信息</h2>
+<p>本应用不收集任何个人信息，因此不处理未成年人的个人信息。
+本应用不面向未成年人提供专门的服务内容。</p>
+
+<h2>十、您对个人信息的权利</h2>
+<p>本应用不收集个人信息，所以不存在查阅、复制、更正、删除、限制使用、拒绝同意
+等针对个人信息的处理活动。但为保障您的自主决定权，本应用提供以下与隐私直接相关的操作：</p>
+<ul>
+  <li><strong>查看隐私政策：</strong>随时可在「设置 → 数据和隐私」中查看本政策全文，无需联网。</li>
+  <li><strong>撤回同意：</strong>在「设置 → 数据和隐私 → 撤回隐私同意」中撤回。
+  撤回后应用会回到首次启动状态，需要重新同意后方可继续使用。</li>
+  <li><strong>删除本地数据：</strong>通过「设置 → 数据和隐私」中的入口删除应用保存的素材与结果文件，
+  或直接卸载应用。</li>
+  <li><strong>投诉与咨询：</strong>如对本政策或应用的处理方式有疑问，可发送邮件至
+  <a href="mailto:demonshir@qq.com">demonshir@qq.com</a>，我们将在收到后尽快答复。</li>
+</ul>
+
+<h2>十一、本政策的更新</h2>
+<p>本政策版本号会随内容变更同步调整。当隐私政策内容发生实质性变更时，
+本应用会在下次启动时重新向您展示隐私声明并征求同意；
+版本号记录在应用沙箱内，仅用于判断是否需要重新征求同意。</p>
+
+<h2>十二、联系我们</h2>
+<p>如您对本隐私政策或本应用有任何疑问、意见或投诉，可通过下列方式联系我们：</p>
+<ul>
+  <li>运营主体：demonshir</li>
+  <li>电子邮箱：<a href="mailto:demonshir@qq.com">demonshir@qq.com</a></li>
+</ul>
+
+<div class="footer">
+  Media Studio · 全部处理在本机完成，不上传任何数据。<br>
+  本政策为应用内预置的离线副本，与应用市场展示的隐私政策内容一致。
+</div>
+
+</body>
+</html>
