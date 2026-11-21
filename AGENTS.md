@@ -143,6 +143,29 @@
   半透明黑要写 `#66000000`；写 `#00000066` 会得到「全透明 + 深蓝」，遮罩等于
   没画（点击却仍被 `hitTestBehavior` 挡住，极难自查）。
 
+### 鸿蒙侧边栏：自绘 SVG 图标 + 可收起
+
+- **不要用 `$r('sys.symbol.*')`**：本机 `command-line-tools/sdk` 与 DevEco Studio
+  安装里都**搜不到 `sys.symbol.` 资源清单**（API 12 的 OpenHarmony SDK 不带这套
+  东西），符号名只能靠猜。**自绘 SVG** 放 `entry/src/main/resources/base/media/`，
+  24×24、白色描边、`round` 线帽，运行时 `Image($r('app.media.nav_xxx'))` 引用。
+  现成 10 个：`nav_home` / `nav_video_gif` / `nav_keying` / `nav_video_crop` /
+  `nav_mono` / `nav_image_crop` / `nav_icons` / `nav_settings` / `nav_diagnostics` /
+  `nav_menu`。
+- **小尺寸图标优先用实心**：20px 下 8 齿描边齿轮会糊成「太阳」，要改成
+  `fill` + `fill-rule="evenodd"` 镂空中心的实心齿轮。
+- **溢出到兄弟容器的内容会被盖住**：侧边栏里 `position()` 做的悬停气泡
+  **画不过右侧内容区**（后画的兄弟节点在上）。气泡要放到**外壳根 Stack 的最外层**。
+- **绝对定位的气泡位置靠版式常量算**：`Index.ets` 顶部的 `NAV_TOP` /
+  `NAV_ROW_H` / `NAV_ROW_GAP` 描述收起态侧边栏的固定版式；
+  **改了侧边栏的 padding 或行高必须同步改这三个常量**。
+- **收起/展开的默认态**在 `Index.ets` 的 `@State navCollapsed`（当前默认收起，
+  对齐剪映/美图的图标栏）。
+- **2in1 模拟器被关掉后用 CLI 重启**：
+  `Emulator.bat -start "<实例名>" -instancePath "<deployed 目录>" -imageRoot "<Sdk 目录>" -noWindow`。
+  实例名带空格时**必须整条命令行传**（`Start-Process -ArgumentList` 传数组会被拆词）；
+  `-instancePath` 给**父目录**，不是实例目录。
+
 ### 鸿蒙上架隐私合规：首启闸门 + 本地 H5 政策
 
 - **首启弹窗要做成「状态机闸门」，不是「盖一层遮罩」**：

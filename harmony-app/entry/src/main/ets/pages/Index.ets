@@ -20,22 +20,37 @@ interface NavEntry {
   id: string;
   label: string;
   hint: string;
+  icon: Resource;
 }
+
+/**
+ * 收起态（只有图标）下侧边栏的固定版式常量。
+ *
+ * 收起时悬停提示的气泡是**绝对定位**画在外壳根 Stack 上的，
+ * 位置靠这几个数字算出来 —— 改了侧边栏的 padding / 行高，必须同步改这里。
+ */
+const NAV_TOP: number = 62;      // 第一个导航项的顶部 y（padding 16 + 头部 42 + 间距 4）
+const NAV_ROW_H: number = 36;    // 单个导航项高度（图标 20 + 上下 padding 8 + 8）
+const NAV_ROW_GAP: number = 4;   // 导航项间距（与侧边栏 Column 的 space 保持一致）
 
 @Entry
 @Component
 struct Index {
   @State tab: string = 'home';
+  /** 侧边栏是否收起：收起时只留图标（剪映/美图秀秀那种图标栏）。 */
+  @State navCollapsed: boolean = true;
+  /** 收起状态下鼠标悬停的导航项序号（-1 表示没有悬停）。 */
+  @State hoverIndex: number = -1;
   private nav: NavEntry[] = [
-    { id: 'home', label: '首页', hint: '选择要使用的功能' },
-    { id: 'converter', label: '视频转GIF', hint: '把视频转换为高质量 GIF' },
-    { id: 'keying', label: 'GIF抠图', hint: '去掉 GIF 背景与水印' },
-    { id: 'videocrop', label: '视频裁剪', hint: '重新构图到固定画布' },
-    { id: 'mono', label: '图片转黑白', hint: '1 位黑白 BMP 与墨水屏数组' },
-    { id: 'crop', label: '图片裁剪', hint: '自定义画布裁剪与缩放' },
-    { id: 'icons', label: '图标生成', hint: '一键产出上架全套图标' },
-    { id: 'settings', label: '设置', hint: '关于与说明' },
-    { id: 'diagnostics', label: '自检', hint: '引擎与平台能力探针' }
+    { id: 'home', label: '首页', hint: '选择要使用的功能', icon: $r('app.media.nav_home') },
+    { id: 'converter', label: '视频转GIF', hint: '把视频转换为高质量 GIF', icon: $r('app.media.nav_video_gif') },
+    { id: 'keying', label: 'GIF抠图', hint: '去掉 GIF 背景与水印', icon: $r('app.media.nav_keying') },
+    { id: 'videocrop', label: '视频裁剪', hint: '重新构图到固定画布', icon: $r('app.media.nav_video_crop') },
+    { id: 'mono', label: '图片转黑白', hint: '1 位黑白 BMP 与墨水屏数组', icon: $r('app.media.nav_mono') },
+    { id: 'crop', label: '图片裁剪', hint: '自定义画布裁剪与缩放', icon: $r('app.media.nav_image_crop') },
+    { id: 'icons', label: '图标生成', hint: '一键产出上架全套图标', icon: $r('app.media.nav_icons') },
+    { id: 'settings', label: '设置', hint: '关于与说明', icon: $r('app.media.nav_settings') },
+    { id: 'diagnostics', label: '自检', hint: '引擎与平台能力探针', icon: $r('app.media.nav_diagnostics') }
   ];
 
   /**
@@ -177,22 +192,37 @@ struct Index {
   }
 
   @Builder
-  private navItem(entry: NavEntry) {
-    Column({ space: 2 }) {
-      Text(entry.label)
-        .fontSize(14)
-        .fontWeight(this.tab === entry.id ? FontWeight.Bold : FontWeight.Normal)
-        .fontColor(this.tab === entry.id ? '#ffffff' : '#c9d1de')
-      if (this.tab === entry.id) {
-        Text(entry.hint).fontSize(10).fontColor('#9fb4d8')
+  private navItem(entry: NavEntry, index: number) {
+    Stack({ alignContent: Alignment.Start }) {
+      Row({ space: 10 }) {
+        Image(entry.icon)
+          .width(20)
+          .height(20)
+          .opacity(this.tab === entry.id ? 1 : 0.55)
+        if (!this.navCollapsed) {
+          Column({ space: 2 }) {
+            Text(entry.label)
+              .fontSize(14)
+              .fontWeight(this.tab === entry.id ? FontWeight.Bold : FontWeight.Normal)
+              .fontColor(this.tab === entry.id ? '#ffffff' : '#c9d1de')
+            if (this.tab === entry.id) {
+              Text(entry.hint).fontSize(10).fontColor('#9fb4d8')
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+        }
       }
+      .width('100%')
+      .justifyContent(this.navCollapsed ? FlexAlign.Center : FlexAlign.Start)
+      .padding({ left: this.navCollapsed ? 0 : 12, right: 12, top: 8, bottom: 8 })
+      .borderRadius(8)
+      .backgroundColor(this.tab === entry.id ? '#2f6fed' : '#00000000')
+      .onClick(() => { this.tab = entry.id; })
+      .onHover((isHover: boolean) => {
+        this.hoverIndex = isHover ? index : -1;
+      })
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-    .borderRadius(8)
-    .backgroundColor(this.tab === entry.id ? '#2f6fed' : '#00000000')
-    .onClick(() => { this.tab = entry.id; })
   }
 
   @Builder
@@ -240,21 +270,42 @@ struct Index {
         Row() {
           // Sidebar
           Column({ space: 4 }) {
-            Text('🎬 Media Studio')
-              .fontSize(16)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#ffffff')
-              .margin({ bottom: 12, left: 14 })
-            ForEach(this.nav, (entry: NavEntry) => {
-              this.navItem(entry)
+            Row({ space: 8 }) {
+              Row() {
+                Image($r('app.media.nav_menu'))
+                  .width(20)
+                  .height(20)
+                  .opacity(0.85)
+              }
+              .width(28)
+              .height(28)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(VerticalAlign.Center)
+              .borderRadius(6)
+              .onClick(() => { this.navCollapsed = !this.navCollapsed; })
+              if (!this.navCollapsed) {
+                Text('🎬 Media Studio')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#ffffff')
+              }
+            }
+            .width('100%')
+            .justifyContent(this.navCollapsed ? FlexAlign.Center : FlexAlign.Start)
+            .padding({ left: this.navCollapsed ? 0 : 8, right: 12, bottom: 14 })
+
+            ForEach(this.nav, (entry: NavEntry, index: number) => {
+              this.navItem(entry, index)
             }, (entry: NavEntry) => entry.id)
             Blank()
-            Text('HarmonyOS PC · 2in1')
-              .fontSize(10)
-              .fontColor('#7d8899')
-              .margin({ left: 14, bottom: 8 })
+            if (!this.navCollapsed) {
+              Text('HarmonyOS PC · 2in1')
+                .fontSize(10)
+                .fontColor('#7d8899')
+                .margin({ left: 14, bottom: 8 })
+            }
           }
-          .width(190)
+          .width(this.navCollapsed ? 58 : 190)
           .height('100%')
           .alignItems(HorizontalAlign.Start)
           .backgroundColor('#1d2430')
@@ -293,6 +344,22 @@ struct Index {
 
       if (this.consent === 'needed' || this.consent === 'declined') {
         this.privacyGate()
+      }
+
+      // 收起态悬停提示：必须画在根 Stack 的最外层，否则会被右侧内容区盖住。
+      if (this.navCollapsed && this.hoverIndex >= 0) {
+        Text(this.nav[this.hoverIndex].label)
+          .fontSize(12)
+          .fontColor('#ffffff')
+          .backgroundColor('#3a4453')
+          .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+          .borderRadius(4)
+          .position({
+            x: 62,
+            y: NAV_TOP + this.hoverIndex * (NAV_ROW_H + NAV_ROW_GAP) + 8
+          })
+          .hitTestBehavior(HitTestMode.None)
+          .zIndex(30)
       }
     }
     .width('100%')

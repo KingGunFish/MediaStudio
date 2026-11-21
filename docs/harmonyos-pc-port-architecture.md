@@ -1,6 +1,6 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.8（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色 + 上架隐私合规）
+> 版本：v1.9（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色 + 上架隐私合规 + 侧边栏图标化与可收起）
 > 日期：2026-11-20
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
 > 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；C6 的分层图标背景层已按审核要求改为**纯色**（v1.7）；**上架隐私合规已落地**（v1.8）：首启隐私弹窗（未同意不构建任何功能页）、设置页「数据和隐私」、本地预置 H5 隐私政策、可撤回同意，**权限清单核对为「零权限」**（HAP 内无 `requestPermissions`，系统 `bm dump` 为空）；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13），**上架前还差公网隐私政策 URL 与应用名对齐（R-23）**，详见 §10 验证报告
@@ -143,6 +143,22 @@ v1.7 对齐的是**素材**的审核语义，v1.8 处理的是**应用本体**�
 > **零权限是本应用最强的合规论据**：审核最容易踩的「过度申请」和「权限用途含糊」两类驳回点，本应用**一个都不会触发** —— 因为它一个权限都不申请。代价是必须把这一点在隐私政策里**写清楚**（否则审核会认为「没写权限 = 漏写」），所以 `privacy.html` 第三节用表格逐项列出「不申请 + 原因」。
 >
 > **本地 H5 不能替代公网地址**：AGC 后台要填的隐私政策 URL 必须是**公网可访问的 HTTPS 地址**，应用内的 `resource://rawfile` 副本只是应用内兜底。同一份 `privacy.html` 是零依赖单文件，可原样部署到任意静态托管（见 §10.13.4）。
+
+### 0.9 v1.9 侧边栏图标化 + 可收起
+
+v1.8 解决的是「能不能过审」，v1.9 解决的是「像不像一个正经的 PC 应用」。原先左侧导航是**纯文字列表**（首页 / 视频转GIF / GIF抠图 / …），和剪映、美图秀秀那类工具的**图标栏**差得很远；而且侧边栏固定 190vp 宽，短屏/小窗下白白占掉一截。
+
+| # | 验证项 | v1.8 状态 | **v1.9 实测结论** |
+|---|---|---|---|
+| N1 | **每个功能配图标** | 无图标，纯文字 | ✅ **通过**：新增 9 个自绘 SVG（`resources/base/media/nav_*.svg`）+ 1 个汉堡键，24×24 线性风格、白色描边；实测全部正常渲染 |
+| N2 | **侧边栏可收起** | 固定 190vp | ✅ **通过**：`navCollapsed` 状态驱动，收起 58vp / 展开 190vp；顶部汉堡键一键切换，默认**收起**（对齐剪映/美图的图标栏） |
+| N3 | **收起后仍能认出功能** | — | ✅ **通过**：收起时只留图标，**悬停弹出名称气泡**（画在根 Stack 最外层，不被内容区遮挡） |
+| N4 | **展开态仍保留文字** | 纯文字 | ✅ **通过**：展开时「图标 + 名称」，当前项额外显示一行灰色说明；当前项用蓝色圆角底 + 满不透明度图标 |
+| N5 | **点击图标能切页** | — | ✅ **通过**：收起态点「设置」齿轮 → 直接进入设置页，当前项高亮同步迁移 |
+
+> **为什么自绘 SVG 而不用 HarmonyOS Symbol**：`$r('sys.symbol.*')` 依赖 HarmonyOS SDK 随附的符号清单，本机 `command-line-tools/sdk` 与 DevEco Studio 安装里都**搜不到**任何 `sys.symbol.` 资源定义（API 12 的 OpenHarmony SDK 不带这套清单）。与其猜符号名，不如自绘 —— 完全可控、不依赖 SDK 版本、20px 下也清晰。
+>
+> **唯一有版式耦合的地方**：收起态的气泡是**绝对定位**的，靠 `Index.ets` 顶部的三个常量（`NAV_TOP` / `NAV_ROW_H` / `NAV_ROW_GAP`）算位置。改了侧边栏的 padding 或行高，**必须同步改这三个常量**（注释里已写明）。
 
 ---
 
@@ -1074,6 +1090,11 @@ I A03200/MsVerify: P4 marker file    = read 17 bytes: child-process-ran
 | 34 | 照抄 ArkWeb 最佳实践调 `webController.destroy()`，编译报「不存在此方法」 | **API 12（`compatibleSdkVersion 5.0.0(12)`）的 `WebviewController` 没有 `destroy()`**；该接口是更晚版本才加的。官方行为是**页面销毁 `aboutToDisappear` 阶段 Web 组件自动解绑控制器、销毁 JS 运行环境** | 什么都不调，让框架自己回收。也不要手动 `stop()`（会打断正在进行的加载） |
 | 35 | 构建报 `'pushUrl' has been deprecated` / `'back' has been deprecated` / `'showToast' has been deprecated` | 新版 SDK 把 `@ohos.router` / `promptAction` 标了 `@deprecated`，推荐换 `Navigation` / `NavPathStack` / `UIContext.getPromptAction()` | 本工程 `compatibleSdkVersion` 是 **5.0.0(12)**，这些 API 在 API 12 上功能正常，**只是 WARN 不阻塞构建**。为了赶审核不重做导航体系；等真要升到 API 18+ 再整体迁移 |
 | 36 | 以为「首启弹窗 = 在应用上盖一层遮罩」就够了 | 遮罩只是**视觉**拦截；功能页如果已经在 `if` 之外被构建，其 `aboutToAppear` 早就跑过了 —— 审核要的是「同意前不得初始化、不得采集」 | 用状态机**不构建功能页**：`if (consent === 'granted') { 整个应用本体 }`，ArkUI 的 `if` 分支为假时组件不会被构造，业务代码一次都不会执行 |
+| 37 | 想用 `$r('sys.symbol.house')` 这类 HarmonyOS Symbol | 本机 `command-line-tools/sdk` 与 DevEco Studio 安装里**搜不到任何 `sys.symbol.` 资源清单**（API 12 的 OpenHarmony SDK 不带这套东西） | 自绘 SVG（`resources/base/media/*.svg` + `Image($r('app.media.xxx'))`）。不猜符号名、不依赖 SDK 版本、20px 下也清晰 |
+| 38 | ArkTS 编译报 `Property 'isHover' does not exist on type 'HoverEvent'` | `onHover` 的回调签名是 **`(isHover: boolean) => void`**；`HoverEvent` 是 `onHoverMove` 的 | 写 `.onHover((isHover: boolean) => { ... })` |
+| 39 | 侧边栏里用 `position()` 做的悬停气泡**被右侧内容区盖住**，只剩一条边 | **后画的兄弟节点在上**：侧边栏是 Row 的第一个子节点，内容区第二个，气泡再深也还在侧边栏的子树里，画不过内容区 | 气泡改画在**外壳根 Stack 的最外层**（`Row` 之后），用绝对定位 + 侧边栏的版式常量算坐标（`NAV_TOP` / `NAV_ROW_H` / `NAV_ROW_GAP`） |
+| 40 | 描边齿轮在 20px 下糊成一团「太阳」 | 8 个细齿在 20px 上只有 3–4px 宽，1.3px 的描边填不满 | 改用**实心齿轮**（`fill` + `fill-rule="evenodd"` 镂空中心），路径由脚本按齿数/半径算出来 |
+| 41 | 2in1 模拟器被关掉后 `hdc tconn` 连不上 | 模拟器实例是 AVD 形态（`%LOCALAPPDATA%\Huawei\Emulator\deployed\<名字>`），进程没起就无从连 | `Emulator.bat -start "<实例名>" -instancePath "<deployed 目录>" -imageRoot "<Sdk 目录>" -noWindow`。**实例名带空格时必须整条命令行传**（`Start-Process -ArgumentList` 传数组会被拆成两个参数，报 `Invalid command: please attach - or -- before the option!`）；`-instancePath` 要给**父目录**，不是实例目录 |
 
 ### 10.6 验证结论对设计的影响（变更清单）
 
@@ -1568,6 +1589,61 @@ hdc -t 127.0.0.1:5557 shell 'bm dump -n xyz.demonshir.mediastudio.hm'
 
 ---
 
+### 10.14 侧边栏图标化与可收起实测（v1.9 新增）
+
+#### 10.14.1 图标素材
+
+9 个功能图标 + 1 个汉堡键，全部自绘 SVG，放在 `harmony-app/entry/src/main/resources/base/media/`：
+
+| 文件 | 对应功能 | 画法 |
+|---|---|---|
+| `nav_home.svg` | 首页 | 屋顶 + 门框折线 |
+| `nav_video_gif.svg` | 视频转GIF | 胶片框 + 上下齿孔（实心小方块） |
+| `nav_keying.svg` | GIF抠图 | 斜握魔法棒 + 两颗四角星 |
+| `nav_video_crop.svg` | 视频裁剪 | 圆角播放框 + 播放三角 |
+| `nav_mono.svg` | 图片转黑白 | 圆 + **左半实心**（黑白语义） |
+| `nav_image_crop.svg` | 图片裁剪 | 四角裁剪框 |
+| `nav_icons.svg` | 图标生成 | 圆角方块 + 山形（图片语义）+ 四角星（生成语义） |
+| `nav_settings.svg` | 设置 | **实心 8 齿齿轮**（`fill-rule="evenodd"` 镂空中心） |
+| `nav_diagnostics.svg` | 自检 | 仪表盘弧 + 指针 |
+| `nav_menu.svg` | 收起/展开 | 三条横线 |
+
+统一规格：24×24 `viewBox`、`stroke="#FFFFFF"`、`stroke-width 1.7`、`round` 线帽线角。齿轮单独用实心（见 §10.5 #40）。
+
+#### 10.14.2 侧边栏状态
+
+```
+                 收起 (58vp)              展开 (190vp)
+            ┌──────────────┐        ┌────────────────────┐
+            │  ☰           │        │ ☰  🎬 Media Studio  │
+            │  🏠  ←蓝底    │        │ 🏠 首页             │
+            │  🎞           │        │    选择要使用的功能   │ ← 当前项的灰色说明
+            │  ✨           │        │ 🎞 视频转GIF         │
+            │  ...          │        │ ✨ GIF抠图           │
+            │              │        │ ...                 │
+            └──────────────┘        │ HarmonyOS PC · 2in1 │
+                                    └────────────────────┘
+```
+
+- 收起态：图标**居中**、宽 58vp；当前项蓝底 + 图标不透明度 1，其余 0.55。
+- 展开态：图标 + 名称（14sp），当前项额外一行 10sp 灰色说明；宽 190vp。
+- 悬停气泡（仅收起态）：`设置` 这样的名称，深灰底 `#3a4453`、圆角 4vp，画在**外壳根 Stack 的最外层**。
+
+#### 10.14.3 2in1 实测
+
+环境：HarmonyOS 7.0.0(API 26) 2in1 模拟器（3120×2080，density 304 → **1 vp = 1.9 物理像素**），双 ABI debug HAP。
+
+| 步骤 | 操作 | 实测结果 |
+|---|---|---|
+| 1 | 全新安装启动 | 首启隐私弹窗正常（不受本次改动影响） |
+| 2 | 同意后看侧边栏 | 收起态：58vp 图标栏，9 个图标全部渲染正常；当前项蓝底 |
+| 3 | `uitest dumpLayout` 量版式 | 侧边栏 `Column` 宽 110px = 58vp；导航项高 68px = 35.8vp；项间距 75–76px = 39.5vp；首项顶 468px（距内容区顶 117px = 61.6vp）→ 与 `NAV_TOP=62 / NAV_ROW_H=36 / NAV_ROW_GAP=4` 一致 |
+| 4 | 点汉堡键 | 展开为 190vp，图标 + 文字全部出现，当前项显示说明行 |
+| 5 | 收起态点「设置」齿轮 | 直接进入设置页，当前项高亮迁移到齿轮 |
+| 6 | 气泡定位验证 | 气泡顶部与图标顶部对齐（1016 vs 1012 物理像素，误差 4px） |
+
+---
+
 ## 附录 A：能力搬运映射表（逐文件）
 
 | 源文件 | 行数 | 去向 | 改造类型 |
@@ -1614,3 +1690,4 @@ hdc -t 127.0.0.1:5557 shell 'bm dump -n xyz.demonshir.mediastudio.hm'
 | v1.6 | 2026-11-19 | **图片侧四页移植（C5 / C6 / C7 + 设置页）**：定下三张图片页的共同路线 —— **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码，零新增 C++**（新增 R-20，放弃 ArkUI Canvas 路线）；新增 `common/ImageIo.ets`（ImageKit 解码含 stride 填充与 PREMUL→UNPREMUL 归一、`cropRgba`/`composeRgba`/`flattenRgba`/`drawScaledRgba`、JPEG/WebP 打包）、`common/Png.ets`（色型 2/6）、`common/Mono1bpp.ets`、`common/AppIcons.ets`、`common/CropMath.ets`（后三者为 Windows 侧 `mono1bpp.ts` / `appicons.ts` / `cropMath.ts` 的逐行移植）与 `pages/Mono.ets`、`pages/Icons.ets`、`pages/Crop.ets`、`pages/Settings.ets`；**2in1 实测**：C7 产出 1-bit BMP 15,662 B（与理论值精确吻合）；C6 三平台共 **41 个文件**，前景层内容越出中央 2/3 安全区的像素 = 0，扁平图一律 RGB 无 alpha，背景层与主机 ffmpeg 参考图平均绝对差 1.92；C5 默认画布裁剪与原图**逐字节 0 差异**，放大 125% 后与 ffmpeg 参考平均绝对差 2.33，PNG/JPG/WebP 三档格式均产出正确尺寸；新增 R-21（JPEG 打包器把透明变黑 → 先压平）、R-22（`desiredSize` 强制拉伸 → 自己算目标尺寸）；新增 §0.6 / §10.12；踩坑速查增至 30 条 |
 | v1.7 | 2026-11-20 | **C6 分层图标背景层改为审核要求的纯色**：给 `IconJob.fit` 增加 **`solid`** 模式，`HarmonyOS/media/background.png` 与 Android 五个 `ic_launcher_background.png` 由「图像压平」改为**只填背景色、不含图像**（Windows 的 `renderJob()` 先填底色再 cover 源图，与「背景层 = 纯色」的审核语义不符）；**2in1 实测**：1024×1024 背景层全部 1,048,576 像素颜色完全一致、非不透明像素 0；把背景色改成 `#336699` 重新生成 → 产出层为 **rgb(51,102,153)**、越色像素 0，预览圆圈同步变色；商店图标 `agc-store-1024.png` / `iOS/icon-1024.png` 仍是 cover 适配的图像（与 ffmpeg 参考平均绝对差 1.92，几何未变）。**这是本移植第一处「两端故意不一致」** —— 审核语义优先于两端逐字节一致，Windows 侧本轮不动；新增 §0.7；踩坑速查增至 31 条 |
 | v1.8 | 2026-11-20 | **上架隐私合规（首启弹窗 + 数据和隐私 + 本地 H5 隐私政策）**：新增 `common/Privacy.ets`（`preferences` 落盘「同意 + 政策版本号」，版本变更即重新征求）、`resources/rawfile/privacy.html`（9,373 B 单文件 H5，零外部依赖、无脚本）、`pages/Privacy.ets`（ArkWeb 承载 + 撤回同意 + 加载/失败提示）；`Index.ets` 改为**同意状态机**驱动的首启闸门 —— 未同意时**不构建任何功能页**（ArkUI `if` 分支为假时组件不构造，业务代码一次都不跑），弹窗含遮罩 + 摘要 + 「《隐私政策》全文」链接 + 「不同意并退出」/「同意并继续」（**无默认勾选**）；`Settings.ets` 增加「数据和隐私」卡片与当前同意状态；`main_pages.json` 注册 `pages/Privacy`。**2in1 实测**：首启弹窗 → H5 加载（hilog `OnPageEnd httpStatusCode:200` / `net_error=0`，无障碍树 DOM 完整）→ 返回闸门仍在 → 同意后放行 → `force-stop` 重启不再弹（持久化生效）→ 设置页可见同意状态 → 撤回同意后弹窗重现 → 不同意则锁死并退出、再启动仍弹窗。**权限核对为「零权限」**：HAP 内 `module.json` 无 `requestPermissions` 字段，系统 `bm dump` 为 `reqPermissions: []`；据此确认**加载本地 rawfile 不需要 INTERNET 权限**。新增 §0.8 / §10.13；踩坑速查增至 36 条（新增 ArkUI 的 8 位色是 **AARRGGBB**、ArkWeb 首帧延迟≠加载失败、API 12 无 `WebviewController.destroy()`、router 的 deprecation 只是 WARN、闸门要「不构建」而非「盖遮罩」） |
+| v1.9 | 2026-11-21 | **侧边栏图标化 + 可收起**：参照剪映 / 美图秀秀，左侧导航由**纯文字列表**改为**图标栏** —— 新增 10 个自绘 SVG（`resources/base/media/nav_*.svg`：首页/胶片/魔法棒/播放器/黑白圆/裁剪框/图标生成/齿轮/仪表盘/汉堡键），24×24 线性风格、白色描边；`Index.ets` 用 `navCollapsed` 驱动侧边栏在 **58vp（纯图标）/ 190vp（图标+文字）**之间切换，默认收起，顶端汉堡键一键展开；收起态**悬停弹出名称气泡**（画在根 Stack 最外层，避免被内容区遮挡），当前项蓝底 + 满不透明度图标，展开态额外显示灰色说明行。**2in1 实测**：9 个图标全部正常渲染；`uitest dumpLayout` 量出侧边栏 58vp / 项高 35.8vp / 项距 39.5vp / 首项顶 61.6vp，与定位常量一致；收起态点图标可直接切页并迁移高亮；气泡顶部与图标顶部对齐（误差 4px）。新增 §0.9 / §10.14；踩坑速查增至 41 条（新增 **HarmonyOS Symbol 在本机 SDK 不可用** → 自绘 SVG、`onHover` 回调是 `(isHover: boolean)`、**溢出气泡会被后画的内容区盖住** → 提到根 Stack、20px 下描边齿轮会糊 → 改实心、模拟器 CLI 重启的参数坑） |
