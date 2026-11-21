@@ -1,9 +1,9 @@
 # Media Studio 移植 HarmonyOS PC —— 架构设计方案
 
-> 版本：v1.9（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色 + 上架隐私合规 + 侧边栏图标化与可收起）
-> 日期：2026-11-20
+> 版本：v1.10（方案验证 + M1 引擎移植 + M2 抠像引擎移植 + M3 应用界面与 C3 裁剪引擎实测 + 双 ABI 构建与真机复跑准备 + C5/C6/C7 三张图片页与设置页移植实测 + C6 背景层改为审核要求的纯色 + 上架隐私合规 + 侧边栏图标化与可收起 + 上架应用名对齐）
+> 日期：2026-11-21
 > 范围：将 `media-studio`（Electron 桌面应用）移植到 HarmonyOS PC / 2in1 设备
-> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；C6 的分层图标背景层已按审核要求改为**纯色**（v1.7）；**上架隐私合规已落地**（v1.8）：首启隐私弹窗（未同意不构建任何功能页）、设置页「数据和隐私」、本地预置 H5 隐私政策、可撤回同意，**权限清单核对为「零权限」**（HAP 内无 `requestPermissions`，系统 `bm dump` 为空）；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13），**上架前还差公网隐私政策 URL 与应用名对齐（R-23）**，详见 §10 验证报告
+> 状态：**方案已在 HarmonyOS 26.0.0 (API 26) + 2in1 模拟器上完成关键路径验证；M1（C1 视频→GIF）、M2（C2 抠像）、M3（C3 裁剪 + 完整应用界面）三条能力均已跑通端到端；C5 图片裁剪 / C6 图标生成 / C7 图片转黑白 / 设置页四张图片侧页面也已移植完成并在 2in1 上实测；C6 的分层图标背景层已按审核要求改为**纯色**（v1.7）；**上架隐私合规已落地**（v1.8）：首启隐私弹窗（未同意不构建任何功能页）、设置页「数据和隐私」、本地预置 H5 隐私政策、可撤回同意，**权限清单核对为「零权限」**（HAP 内无 `requestPermissions`，系统 `bm dump` 为空）；应用通过系统文件选择器产出的 GIF 与 Windows 版逐像素一致；工程已支持 arm64-v8a + x86_64 双 ABI 一次构建，aarch64 真机复跑只差设备重新连上（R-13）；**上架应用名已统一为「Media Studio」**（v1.10，R-23 收敛到只剩「公网隐私政策 URL」这一件需人工完成的事），详见 §10 验证报告
 
 ---
 
@@ -872,7 +872,7 @@ ArkUI 提供 `onDragStart` / `onDrop` 与系统级 `drag` 框架。需验证 PC 
 | **R-20** | **ArkUI Canvas 2D 撑不起图片类页面**（v1.1 只验证了单点像素读写，整幅像素搬运在 PC 端不可信） | 中 | — | 放弃 Canvas 路线，改用 **ImageKit 解码/缩放 + ArkTS 像素运算 + 原生 `zlibDeflate` 编码**，三张图片页共用同一套基础设施（见 §10.12.1） | ✅ **新增并已解决**（v1.6） |
 | **R-21** | **ImageKit 的 JPEG 打包器不支持 alpha**（透明像素会被按黑色写出） | 中 | 高 | 走 JPG 前先用 `flattenRgba()` 按背景色压平；WebP/PNG 保留 alpha（见 §10.5 #27） | ✅ **新增并已解决**（v1.6） |
 | **R-22** | **ImageKit 的 `desiredSize` 强制拉伸到目标尺寸、不保比例**（直接传目标尺寸会把图标拉变形） | 中 | 中 | `cover` / `safe` 两种适配各自算出**保持比例**的目标尺寸再交给 ImageKit（见 §10.5 #26、§10.12.3） | ✅ **新增并已解决**（v1.6） |
-| **R-23** | **上架审核只做了一半**：应用内的首启弹窗、数据和隐私入口、本地 H5 政策都已落地，但 **AGC 后台要填的「公网隐私政策 URL」还没有**；同时 `app_name` 仍是占位的 `MS Verify`，与政策正文里的「Media Studio」对不上 | 中 | **高**（直接卡上架） | 把 `privacy.html`（零依赖单文件）原样部署到静态托管拿 HTTPS 地址；把 `app_name` 改成最终应用名并同步政策正文；核对政策里的运营主体与 AGC 后台企业/开发者一致（见 §10.13.4） | ⚠️ **新增，待人工完成**（v1.8）—— 应用侧代码已闭环 |
+| **R-23** | **上架审核只做了一半**：应用内的首启弹窗、数据和隐私入口、本地 H5 政策都已落地，但 **AGC 后台要填的「公网隐私政策 URL」还没有** | 中 | **高**（直接卡上架） | 把 `privacy.html`（零依赖单文件）原样部署到静态托管拿 HTTPS 地址；核对政策里的运营主体与 AGC 后台企业/开发者一致（见 §10.13.4） | 🟡 **部分闭环**（v1.10）—— 应用名已统一为「Media Studio」（原占位 `MS Verify`），**只剩公网 URL 与主体核对两项需人工完成** |
 
 ---
 
@@ -1580,8 +1580,13 @@ hdc -t 127.0.0.1:5557 shell 'bm dump -n xyz.demonshir.mediastudio.hm'
 
 本地合规代码只覆盖「应用内」的部分，AGC 后台侧还有几件机器做不了的事：
 
-1. **公网隐私政策 URL**：把 `harmony-app/entry/src/main/resources/rawfile/privacy.html` 原样上传到任意静态托管（文件零外部依赖，直接放就行），拿到 HTTPS 地址填进 AGC 后台。**必须公网可访问**，不能填 `resource://`。
-2. **应用名对齐**：`AppScope/resources/base/element/string.json` 的 `app_name` 目前还是占位的 **`MS Verify`**，而隐私政策正文写的是 **「Media Studio」**。上架前必须把二者统一，否则审核会认为「隐私政策指向的应用与应用市场条目对不上」。
+1. **公网隐私政策 URL（唯一剩下的上架阻塞项）**：把 `harmony-app/entry/src/main/resources/rawfile/privacy.html` 原样上传到任意静态托管（文件零外部依赖、无脚本、无网络请求，直接改名成 `index.html` 放进去就行），拿到 HTTPS 地址填进 AGC 后台。**必须公网可访问**，不能填 `resource://`。
+   - 文件路径：`harmony-app/entry/src/main/resources/rawfile/privacy.html`（9,373 B）
+   - 零外部依赖：全文只有内联 `<style>`，没有 `<script>`、没有 `<img src="http...">`、没有字体外链 —— 可直接用 GitHub Pages / Gitee Pages / Vercel / 对象存储静态站点承载，**不需要任何构建步骤**
+   - 部署后**建议原样不动**：应用内那份副本与公网那份是同一个文件，改一处要同步改两处，否则审核会认为政策内容前后不一致
+2. **应用名对齐 ✅ 已完成（v1.10）**：`AppScope/resources/base/element/string.json` 的 `app_name` 与 `EntryAbility_label` 已从脚手架占位的 **`MS Verify`** 改为 **`Media Studio`**，与 README 标题、隐私政策正文、应用内标题栏完全一致。`module_desc` / `EntryAbility_desc` 也一并从 `verification module` / `verification entry ability` 换成真实描述（这两项会显示在应用详情与 AGC 条目里）。
+   - 生效范围：`AppScope/app.json5` 的 `label` 指向 `$string:app_name`，所以**桌面图标名称、窗口标题栏、任务管理器标题**会一起变成 "Media Studio"
+   - **未改的**：`entry/src/main/cpp/types/libmsverify/` 是 NAPI 类型包名（`libmsverify.so`），改名要连带改 CMake 与 NAPI 注册，属于纯内部命名，**不影响上架条目**，故不动
 3. **主体信息**：`privacy.html` 里的运营主体（`demonshir`）与联系邮箱（`demonshir@qq.com`）取自 README 的「联系」一节。上架前请按**实际的开发者/公司主体**核对一遍，隐私政策里的主体必须与 AGC 后台填的企业/开发者一致。
 4. **第三方 SDK 清单**：AGC 后台有一栏「第三方 SDK / 收集的数据」。本应用为 **0 个**，按实填写即可；随包的 FFmpeg 是**进程内动态库、不是 SDK**，且无采集行为。
 5. **弹窗截图留档**：审核期间可能要复现首启弹窗 —— 清数据即可重现
@@ -1691,3 +1696,4 @@ hdc -t 127.0.0.1:5557 shell 'bm dump -n xyz.demonshir.mediastudio.hm'
 | v1.7 | 2026-11-20 | **C6 分层图标背景层改为审核要求的纯色**：给 `IconJob.fit` 增加 **`solid`** 模式，`HarmonyOS/media/background.png` 与 Android 五个 `ic_launcher_background.png` 由「图像压平」改为**只填背景色、不含图像**（Windows 的 `renderJob()` 先填底色再 cover 源图，与「背景层 = 纯色」的审核语义不符）；**2in1 实测**：1024×1024 背景层全部 1,048,576 像素颜色完全一致、非不透明像素 0；把背景色改成 `#336699` 重新生成 → 产出层为 **rgb(51,102,153)**、越色像素 0，预览圆圈同步变色；商店图标 `agc-store-1024.png` / `iOS/icon-1024.png` 仍是 cover 适配的图像（与 ffmpeg 参考平均绝对差 1.92，几何未变）。**这是本移植第一处「两端故意不一致」** —— 审核语义优先于两端逐字节一致，Windows 侧本轮不动；新增 §0.7；踩坑速查增至 31 条 |
 | v1.8 | 2026-11-20 | **上架隐私合规（首启弹窗 + 数据和隐私 + 本地 H5 隐私政策）**：新增 `common/Privacy.ets`（`preferences` 落盘「同意 + 政策版本号」，版本变更即重新征求）、`resources/rawfile/privacy.html`（9,373 B 单文件 H5，零外部依赖、无脚本）、`pages/Privacy.ets`（ArkWeb 承载 + 撤回同意 + 加载/失败提示）；`Index.ets` 改为**同意状态机**驱动的首启闸门 —— 未同意时**不构建任何功能页**（ArkUI `if` 分支为假时组件不构造，业务代码一次都不跑），弹窗含遮罩 + 摘要 + 「《隐私政策》全文」链接 + 「不同意并退出」/「同意并继续」（**无默认勾选**）；`Settings.ets` 增加「数据和隐私」卡片与当前同意状态；`main_pages.json` 注册 `pages/Privacy`。**2in1 实测**：首启弹窗 → H5 加载（hilog `OnPageEnd httpStatusCode:200` / `net_error=0`，无障碍树 DOM 完整）→ 返回闸门仍在 → 同意后放行 → `force-stop` 重启不再弹（持久化生效）→ 设置页可见同意状态 → 撤回同意后弹窗重现 → 不同意则锁死并退出、再启动仍弹窗。**权限核对为「零权限」**：HAP 内 `module.json` 无 `requestPermissions` 字段，系统 `bm dump` 为 `reqPermissions: []`；据此确认**加载本地 rawfile 不需要 INTERNET 权限**。新增 §0.8 / §10.13；踩坑速查增至 36 条（新增 ArkUI 的 8 位色是 **AARRGGBB**、ArkWeb 首帧延迟≠加载失败、API 12 无 `WebviewController.destroy()`、router 的 deprecation 只是 WARN、闸门要「不构建」而非「盖遮罩」） |
 | v1.9 | 2026-11-21 | **侧边栏图标化 + 可收起**：参照剪映 / 美图秀秀，左侧导航由**纯文字列表**改为**图标栏** —— 新增 10 个自绘 SVG（`resources/base/media/nav_*.svg`：首页/胶片/魔法棒/播放器/黑白圆/裁剪框/图标生成/齿轮/仪表盘/汉堡键），24×24 线性风格、白色描边；`Index.ets` 用 `navCollapsed` 驱动侧边栏在 **58vp（纯图标）/ 190vp（图标+文字）**之间切换，默认收起，顶端汉堡键一键展开；收起态**悬停弹出名称气泡**（画在根 Stack 最外层，避免被内容区遮挡），当前项蓝底 + 满不透明度图标，展开态额外显示灰色说明行。**2in1 实测**：9 个图标全部正常渲染；`uitest dumpLayout` 量出侧边栏 58vp / 项高 35.8vp / 项距 39.5vp / 首项顶 61.6vp，与定位常量一致；收起态点图标可直接切页并迁移高亮；气泡顶部与图标顶部对齐（误差 4px）。新增 §0.9 / §10.14；踩坑速查增至 41 条（新增 **HarmonyOS Symbol 在本机 SDK 不可用** → 自绘 SVG、`onHover` 回调是 `(isHover: boolean)`、**溢出气泡会被后画的内容区盖住** → 提到根 Stack、20px 下描边齿轮会糊 → 改实心、模拟器 CLI 重启的参数坑） |
+| v1.10 | 2026-11-21 | **上架应用名对齐（R-23 收敛）**：`AppScope/resources/base/element/string.json` 与 `entry/src/main/resources/base/element/string.json` 的 `app_name` / `EntryAbility_label` 由脚手架占位的 **`MS Verify`** 改为 **`Media Studio`**，`module_desc` / `EntryAbility_desc` 由 `verification module` / `verification entry ability` 换成真实描述，`entry/oh-package.json5` 的 `description` 同步。生效范围：`AppScope/app.json5` 的 `label` 指向 `$string:app_name`，桌面图标名 / 窗口标题栏 / 任务管理器标题**三处一起变**。**2in1 实测**：重装后窗口标题栏由「MS Verify」变为「Media Studio」，应用内首页标题与隐私政策正文同名一致。R-23 从「应用名对不上 + 公网 URL 缺失」缩到**只剩公网 URL 与主体信息核对**；§10.13.4 补齐隐私政策的自助部署说明（零依赖单文件、无需构建、改名 `index.html` 即可）。**未改 NAPI 类型包名** `libmsverify`（纯内部命名，改名要连带改 CMake 与 NAPI 注册，不影响上架条目） |

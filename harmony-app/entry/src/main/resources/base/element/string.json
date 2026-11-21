@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "verification module"
+      "value": "视频与图片处理工具，全部处理在本机完成。"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "verification entry ability"
+      "value": "Media Studio 主界面。"
     },
     {
       "name": "EntryAbility_label",
-      "value": "MS Verify"
+      "value": "Media Studio"
     }
   ]
 }

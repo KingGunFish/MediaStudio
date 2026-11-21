@@ -195,4 +195,10 @@
 - **AGC 后台要填的隐私政策 URL 必须公网可访问（HTTPS）**，应用内的
   `resource://rawfile` 只是兜底。把同一份 `privacy.html`（零依赖单文件）
   原样部署到静态托管即可。
+- **上架应用名统一为「Media Studio」**：脚手架占位 `MS Verify` 已清除 ——
+  `AppScope/resources/base/element/string.json` 的 `app_name` 是唯一真源
+  （`AppScope/app.json5` 的 `label` 指向它），桌面图标名 / 窗口标题栏 /
+  任务管理器标题三处一起变。改名字时**同步检查** `privacy.html` 正文与
+  README 标题，审核会核对「政策指向的应用」与「应用市场条目」是否同一个。
+  NAPI 类型包名 `libmsverify` 是纯内部命名，与上架条目无关，**不要跟着改**。
 - 详见 `docs/harmonyos-pc-port-architecture.md` §0.8、§10.13、§10.5 #32–#36。
